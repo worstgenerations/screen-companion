@@ -142,3 +142,88 @@
     color: var(--color-foreground);
   }
 }
+
+/* ---- Aura voice assistant design system ---- */
+:root {
+  --background: oklch(0.16 0.035 275);
+  --foreground: oklch(0.96 0.01 280);
+  --card: oklch(0.21 0.04 275);
+  --card-foreground: oklch(0.96 0.01 280);
+  --popover: oklch(0.21 0.04 275);
+  --popover-foreground: oklch(0.96 0.01 280);
+  --primary: oklch(0.62 0.19 295);
+  --primary-foreground: oklch(0.98 0.01 280);
+  --secondary: oklch(0.26 0.05 275);
+  --secondary-foreground: oklch(0.96 0.01 280);
+  --muted: oklch(0.26 0.05 275);
+  --muted-foreground: oklch(0.72 0.04 285);
+  --accent: oklch(0.74 0.15 205);
+  --accent-foreground: oklch(0.18 0.04 275);
+  --destructive: oklch(0.68 0.19 22);
+  --destructive-foreground: oklch(0.98 0.01 280);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.74 0.15 205);
+  --aura-glyph: oklch(0.98 0.01 280);
+}
+
+@theme inline {
+  --color-aura-glyph: var(--aura-glyph);
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+}
+
+@utility bg-aura-field {
+  background:
+    radial-gradient(60rem 40rem at 50% -10%, oklch(0.4 0.16 295 / 0.35), transparent 70%),
+    radial-gradient(45rem 35rem at 15% 100%, oklch(0.5 0.14 205 / 0.22), transparent 70%);
+}
+
+.orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at 35% 30%,
+    oklch(0.85 0.13 205 / 0.95),
+    oklch(0.6 0.2 295 / 0.9) 55%,
+    oklch(0.35 0.15 290 / 0.85) 100%
+  );
+  box-shadow:
+    0 0 60px oklch(0.6 0.2 295 / 0.55),
+    0 0 140px oklch(0.55 0.16 250 / 0.35),
+    inset 0 0 50px oklch(1 0 0 / 0.18);
+  transition: transform 300ms ease;
+}
+
+.orb-idle {
+  animation: orb-pulse 4.5s ease-in-out infinite;
+}
+
+.orb-listening {
+  animation: orb-pulse 1.6s ease-in-out infinite;
+  box-shadow:
+    0 0 80px oklch(0.74 0.15 205 / 0.7),
+    0 0 180px oklch(0.6 0.2 295 / 0.4),
+    inset 0 0 50px oklch(1 0 0 / 0.25);
+}
+
+.orb-thinking {
+  animation: orb-pulse 1s ease-in-out infinite;
+}
+
+.orb-speaking {
+  animation: orb-pulse 0.7s ease-in-out infinite;
+}
+
+@keyframes orb-pulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+    filter: brightness(0.95);
+  }
+  50% {
+    transform: scale(1.04);
+    filter: brightness(1.15);
+  }
+}
+
