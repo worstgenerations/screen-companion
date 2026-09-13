@@ -71,6 +71,15 @@ SYSTEM = (
 )
 
 
+def looks_blank(img):
+    """True if the frame is essentially one flat colour (blocked/black capture)."""
+    small = img.convert("L").resize((64, 64))
+    pixels = list(small.getdata())
+    avg = sum(pixels) / len(pixels)
+    variance = sum((p - avg) ** 2 for p in pixels) / len(pixels)
+    return variance < 4.0
+
+
 def ask_gemini(img, goal, last_advice):
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM}]},
@@ -79,7 +88,7 @@ def ask_gemini(img, goal, last_advice):
                 "role": "user",
                 "parts": [
                     {"text": f"Goal: {goal}\nYour last tip was: {last_advice or 'none'}"},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": to_base64_jpeg(img)}},
+                    {"inlineData": {"mimeType": "image/jpeg", "data": to_base64_jpeg(img)}},
                 ],
             }
         ],
@@ -87,7 +96,7 @@ def ask_gemini(img, goal, last_advice):
     }
     r = requests.post(
         API_URL,
-        params={"key": API_KEY},
+        headers={"x-goog-api-key": API_KEY},
         json=body,
         timeout=60,
     )
@@ -188,6 +197,12 @@ def watcher(orb, voice, goal, stop):
         try:
             img = grab_screen()
             if difference(last_img, img) < CHANGE_THRESHOLD:
+                continue
+            if looks_blank(img):
+                print("error: screenshot came back blank — your system may be blocking "
+                      "screen capture. On Mac: System Settings > Privacy & Security > "
+                      "Screen Recording > allow your terminal. On Linux use X11, not Wayland.")
+                time.sleep(4)
                 continue
             last_img = img
             orb.state = "thinking"
