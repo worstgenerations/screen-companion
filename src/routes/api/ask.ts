@@ -6,9 +6,11 @@ const SYSTEM = `You are Aura, a friendly spoken voice assistant that guides peop
 
 Rules for every reply:
 - You are being SPOKEN ALOUD. Keep it short: 2-4 sentences max.
-- Give ONE concrete step at a time, then ask "ready for the next one?" style follow-up.
+- Give ONE concrete step at a time, then wait for the person.
 - No markdown, no bullet points, no code blocks, no URLs read out character by character.
-- Be warm, calm and direct. Never mention that you are an AI model.`;
+- Be warm, calm and direct. Never mention that you are an AI model.
+- When you are shown a screenshot of the person's screen, guide them based on what you actually see: name the button or field they need and where it is on screen.
+- During screen watching, if the screen shows nothing new to react to, or you have nothing useful to add right now, reply with exactly: SKIP`;
 
 export const Route = createFileRoute("/api/ask")({
   server: {
@@ -23,28 +25,37 @@ export const Route = createFileRoute("/api/ask")({
           audio?: string;
           format?: string;
           text?: string;
+          image?: string;
           history?: Turn[];
         };
 
         const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
 
-        const userContent = body.audio
-          ? [
-              {
-                type: "text",
-                text: "Listen to this and answer it as spoken guidance. Reply with JSON only: {\"heard\": \"<what the person said>\", \"reply\": \"<your spoken answer>\"}",
-              },
-              {
-                type: "input_audio",
-                input_audio: { data: body.audio, format: body.format || "webm" },
-              },
-            ]
-          : [
-              {
-                type: "text",
-                text: `The person typed: ${body.text ?? ""}\n\nReply with JSON only: {"heard": "<what they asked>", "reply": "<your spoken answer>"}`,
-              },
-            ];
+        const content: Record<string, unknown>[] = [];
+        if (body.image) {
+          content.push({
+            type: "text",
+            text: `${body.text ?? "Here is my screen. Guide me."}\n\nReply with JSON only: {"heard": "<what they asked, or 'screen check' if this is just a screenshot>", "reply": "<your spoken answer, or exactly SKIP if there is nothing new to say>"}`,
+          });
+          content.push({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${body.image}` },
+          });
+        } else if (body.audio) {
+          content.push({
+            type: "text",
+            text: "Listen to this and answer it as spoken guidance. Reply with JSON only: {\"heard\": \"<what the person said>\", \"reply\": \"<your spoken answer>\"}",
+          });
+          content.push({
+            type: "input_audio",
+            input_audio: { data: body.audio, format: body.format || "webm" },
+          });
+        } else {
+          content.push({
+            type: "text",
+            text: `The person typed: ${body.text ?? ""}\n\nReply with JSON only: {"heard": "<what they asked>", "reply": "<your spoken answer>"}`,
+          });
+        }
 
         const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
@@ -57,7 +68,7 @@ export const Route = createFileRoute("/api/ask")({
             messages: [
               { role: "system", content: SYSTEM },
               ...history.map((t) => ({ role: t.role, content: t.content })),
-              { role: "user", content: userContent },
+              { role: "user", content },
             ],
             response_format: { type: "json_object" },
           }),
