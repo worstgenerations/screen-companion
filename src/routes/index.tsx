@@ -160,7 +160,7 @@ function Index() {
     if (last) {
       let diff = 0;
       for (let i = 0; i < pixels.length; i += 4) {
-        diff += Math.abs(pixels[i] - last[i]);
+        diff += Math.abs(pixels[i]! - last[i]!);
       }
       const mean = diff / (pixels.length / 4);
       if (mean < CHANGE_THRESHOLD) return; // nothing changed, skip the call
