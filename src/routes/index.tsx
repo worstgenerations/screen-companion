@@ -1,21 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Square, Loader2, Volume2 } from "lucide-react";
+import { Mic, Square, Loader2, Volume2, MonitorPlay, MonitorOff } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Aura — Your Spoken Step-by-Step Guide" },
+      { title: "Aura — Sees Your Screen, Talks You Through It" },
       {
         name: "description",
         content:
-          "Tap the orb, say what you need help with, and Aura talks you through it one step at a time.",
+          "Share your screen with Aura and it watches what you're doing, then speaks live step-by-step guidance out loud.",
       },
-      { property: "og:title", content: "Aura — Your Spoken Step-by-Step Guide" },
+      { property: "og:title", content: "Aura — Sees Your Screen, Talks You Through It" },
       {
         property: "og:description",
         content:
-          "Tap the orb, say what you need help with, and Aura talks you through it one step at a time.",
+          "Share your screen with Aura and it watches what you're doing, then speaks live step-by-step guidance out loud.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -27,26 +27,51 @@ export const Route = createFileRoute("/")({
 type Mode = "idle" | "listening" | "thinking" | "speaking";
 type Turn = { role: "user" | "assistant"; content: string };
 
+const FRAME_INTERVAL_MS = 4000;
+const CHANGE_THRESHOLD = 6; // mean pixel difference to count as "screen changed"
+
 function Index() {
   const [mode, setMode] = useState<Mode>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [watching, setWatching] = useState(false);
+  const [goal, setGoal] = useState("");
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const watchStreamRef = useRef<MediaStream | null>(null);
+  const watchTimerRef = useRef<number | null>(null);
+  const lastFrameRef = useRef<Uint8ClampedArray | null>(null);
+  const busyRef = useRef(false);
+  const speakingRef = useRef(false);
+  const goalRef = useRef("");
+  goalRef.current = goal;
   const turnsRef = useRef<Turn[]>([]);
   turnsRef.current = turns;
+
+  const stopWatching = useCallback(() => {
+    if (watchTimerRef.current !== null) {
+      window.clearInterval(watchTimerRef.current);
+      watchTimerRef.current = null;
+    }
+    watchStreamRef.current?.getTracks().forEach((t) => t.stop());
+    watchStreamRef.current = null;
+    lastFrameRef.current = null;
+    setWatching(false);
+  }, []);
 
   useEffect(() => {
     return () => {
       audioRef.current?.pause();
       recorderRef.current?.stream.getTracks().forEach((t) => t.stop());
+      stopWatching();
     };
-  }, []);
+  }, [stopWatching]);
 
   const speak = useCallback(async (text: string) => {
     setMode("speaking");
+    speakingRef.current = true;
     try {
       const res = await fetch("/api/speak", {
         method: "POST",
@@ -57,15 +82,19 @@ function Index() {
       const blob = await res.blob();
       const audio = new Audio(URL.createObjectURL(blob));
       audioRef.current = audio;
-      audio.onended = () => setMode("idle");
+      audio.onended = () => {
+        speakingRef.current = false;
+        setMode("idle");
+      };
       await audio.play();
     } catch {
+      speakingRef.current = false;
       setMode("idle");
     }
   }, []);
 
   const send = useCallback(
-    async (payload: { audio?: string; format?: string; text?: string }) => {
+    async (payload: { audio?: string; format?: string; text?: string; image?: string }) => {
       setMode("thinking");
       setError(null);
       try {
@@ -77,13 +106,16 @@ function Index() {
         const data = (await res.json()) as { heard?: string; reply?: string; error?: string };
         if (!res.ok || data.error) throw new Error(data.error || "failed");
 
+        const reply = data.reply!.trim();
+        const silent = reply.toUpperCase().startsWith("SKIP");
         const heard = data.heard?.trim() || payload.text?.trim() || "…";
         setTurns((prev) => [
           ...prev,
           { role: "user", content: heard },
-          { role: "assistant", content: data.reply! },
+          { role: "assistant", content: silent ? "…" : reply },
         ]);
-        await speak(data.reply!);
+        if (!silent) await speak(reply);
+        else setMode("idle");
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMode("idle");
@@ -92,9 +124,85 @@ function Index() {
     [speak],
   );
 
+  const captureFrame = useCallback(async () => {
+    const stream = watchStreamRef.current;
+    if (!stream || busyRef.current || speakingRef.current) return;
+    const track = stream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") return;
+
+    const video = document.createElement("video");
+    video.muted = true;
+    video.srcObject = new MediaStream([track]);
+    await video.play().catch(() => {});
+    if (!video.videoWidth) {
+      video.srcObject = null;
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 1024 / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    video.pause();
+    video.srcObject = null;
+
+    // Change detection on a tiny downsample
+    const small = document.createElement("canvas");
+    small.width = 64;
+    small.height = 36;
+    const sctx = small.getContext("2d")!;
+    sctx.drawImage(canvas, 0, 0, 64, 36);
+    const pixels = sctx.getImageData(0, 0, 64, 36).data;
+    const last = lastFrameRef.current;
+    lastFrameRef.current = pixels;
+    if (last) {
+      let diff = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        diff += Math.abs(pixels[i] - last[i]);
+      }
+      const mean = diff / (pixels.length / 4);
+      if (mean < CHANGE_THRESHOLD) return; // nothing changed, skip the call
+    }
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+    const image = dataUrl.split(",")[1];
+    if (!image) return;
+
+    busyRef.current = true;
+    try {
+      const g = goalRef.current.trim();
+      await send({
+        image,
+        text: g
+          ? `My goal is: ${g}. Here is my screen right now — tell me the next one step, or SKIP if nothing changed that needs a reaction.`
+          : `Here is my screen right now. Guide me on what you see, or SKIP if nothing needs a reaction.`,
+      });
+    } finally {
+      busyRef.current = false;
+    }
+  }, [send]);
+
+  const startWatching = useCallback(async () => {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      watchStreamRef.current = stream;
+      stream.getVideoTracks()[0]?.addEventListener("ended", stopWatching);
+      setWatching(true);
+      lastFrameRef.current = null;
+      void captureFrame(); // first frame right away
+      watchTimerRef.current = window.setInterval(() => void captureFrame(), FRAME_INTERVAL_MS);
+    } catch {
+      setError("Screen sharing was cancelled. Tap “Watch my screen” and pick the screen to share.");
+    }
+  }, [captureFrame, stopWatching]);
+
   const startListening = useCallback(async () => {
     setError(null);
     audioRef.current?.pause();
+    speakingRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
@@ -131,6 +239,7 @@ function Index() {
       setMode("thinking");
     } else if (mode === "speaking") {
       audioRef.current?.pause();
+      speakingRef.current = false;
       setMode("idle");
     } else if (mode === "idle") {
       void startListening();
@@ -144,9 +253,11 @@ function Index() {
         ? "Thinking it through…"
         : mode === "speaking"
           ? "Speaking — tap to stop"
-          : turns.length
-            ? "Tap to ask the next thing"
-            : "Tap and ask me anything";
+          : watching
+            ? "Watching your screen…"
+            : turns.length
+              ? "Tap to ask the next thing"
+              : "Tap and ask me anything";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
@@ -156,8 +267,8 @@ function Index() {
         <header className="text-center">
           <h1 className="font-display text-4xl tracking-tight sm:text-5xl">Aura</h1>
           <p className="mt-3 max-w-md text-balance text-sm text-muted-foreground">
-            Say what you're trying to do — set up a pipeline, open a store, fix a setting — and
-            I'll walk you through it out loud, one step at a time.
+            Share your screen and tell me your goal — I'll watch what you're doing and talk you
+            through it out loud, one step at a time.
           </p>
         </header>
 
@@ -183,6 +294,37 @@ function Index() {
 
         <p className="text-sm font-medium tracking-wide text-muted-foreground">{label}</p>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+
+        <div className="mt-8 flex w-full max-w-md flex-col items-center gap-3">
+          <input
+            type="text"
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder="Your goal, e.g. help me open a Shopify store"
+            className="w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <button
+            type="button"
+            onClick={watching ? stopWatching : startWatching}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            {watching ? (
+              <>
+                <MonitorOff className="size-4" /> Stop watching
+              </>
+            ) : (
+              <>
+                <MonitorPlay className="size-4" /> Watch my screen
+              </>
+            )}
+          </button>
+          {watching && (
+            <p className="text-xs text-muted-foreground">
+              Keep this tab open — you can switch to any other window and I'll still see the screen
+              you shared.
+            </p>
+          )}
+        </div>
 
         <section className="mt-12 w-full space-y-5 pb-16" aria-live="polite">
           {turns.map((turn, i) => (
