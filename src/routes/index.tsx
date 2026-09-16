@@ -146,11 +146,11 @@ function Index() {
     [speak],
   );
 
-  const captureFrame = useCallback(async () => {
+  const grabFrame = useCallback(async () => {
     const stream = watchStreamRef.current;
-    if (!stream || busyRef.current) return;
+    if (!stream) return null;
     const track = stream.getVideoTracks()[0];
-    if (!track || track.readyState !== "live") return;
+    if (!track || track.readyState !== "live") return null;
 
     const video = document.createElement("video");
     video.muted = true;
@@ -158,7 +158,7 @@ function Index() {
     await video.play().catch(() => {});
     if (!video.videoWidth) {
       video.srcObject = null;
-      return;
+      return null;
     }
 
     const canvas = document.createElement("canvas");
@@ -169,6 +169,13 @@ function Index() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     video.pause();
     video.srcObject = null;
+    return canvas;
+  }, []);
+
+  const captureFrame = useCallback(async () => {
+    if (busyRef.current) return;
+    const canvas = await grabFrame();
+    if (!canvas) return;
 
     // Change detection on a tiny downsample
     const small = document.createElement("canvas");
@@ -204,7 +211,28 @@ function Index() {
     } finally {
       busyRef.current = false;
     }
-  }, [send]);
+  }, [grabFrame, send]);
+
+  const sendChat = useCallback(async () => {
+    const text = chatRef.current.trim();
+    if (!text || busyRef.current) return;
+    setChat("");
+    busyRef.current = true;
+    try {
+      const canvas = await grabFrame();
+      const image = canvas ? canvas.toDataURL("image/jpeg", 0.7).split(",")[1] : undefined;
+      const g = goalRef.current.trim();
+      await send({
+        image,
+        text: image
+          ? `${g ? `My goal is: ${g}. ` : ""}Here is my screen right now. I'm asking you: ${text}. Answer me directly — never reply SKIP to a question I typed.`
+          : text,
+      });
+    } finally {
+      busyRef.current = false;
+    }
+  }, [grabFrame, send]);
+
 
   const startWatching = useCallback(async () => {
     setError(null);
