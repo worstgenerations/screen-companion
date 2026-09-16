@@ -237,7 +237,8 @@ function Index() {
       const image = canvas ? canvas.toDataURL("image/jpeg", 0.7).split(",")[1] : undefined;
       const g = goalRef.current.trim();
       await send({
-        image,
+        ...(image ? { image } : {}),
+
         text: image
           ? `${g ? `My goal is: ${g}. ` : ""}Here is my screen right now. I'm asking you: ${text}. Answer me directly — never reply SKIP to a question I typed.`
           : text,
