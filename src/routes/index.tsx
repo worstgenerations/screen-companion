@@ -36,6 +36,8 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [watching, setWatching] = useState(false);
   const [goal, setGoal] = useState("");
+  const [chat, setChat] = useState("");
+
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
