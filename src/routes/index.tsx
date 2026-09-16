@@ -49,6 +49,9 @@ function Index() {
   const speakingRef = useRef(false);
   const goalRef = useRef("");
   goalRef.current = goal;
+  const chatRef = useRef("");
+  chatRef.current = chat;
+
   const turnsRef = useRef<Turn[]>([]);
   turnsRef.current = turns;
 
