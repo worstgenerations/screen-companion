@@ -389,7 +389,7 @@ function Index() {
           )}
         </div>
 
-        <section className="mt-12 w-full space-y-5 pb-16" aria-live="polite">
+        <section className="mt-12 w-full space-y-5 pb-4" aria-live="polite">
           {turns.map((turn, i) => (
             <div
               key={i}
@@ -407,6 +407,37 @@ function Index() {
             </div>
           ))}
         </section>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void sendChat();
+          }}
+          className="sticky bottom-4 mt-auto flex w-full items-end gap-2 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur"
+        >
+          <textarea
+            value={chat}
+            onChange={(e) => setChat(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void sendChat();
+              }
+            }}
+            rows={1}
+            placeholder={watching ? "Type instead of talking — I can see your screen" : "Type a message…"}
+            className="max-h-32 flex-1 resize-none bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+          <button
+            type="submit"
+            aria-label="Send message"
+            disabled={!chat.trim() || mode === "thinking"}
+            className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            <SendHorizontal className="size-4" />
+          </button>
+        </form>
+
       </div>
     </main>
   );
