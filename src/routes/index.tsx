@@ -27,8 +27,8 @@ export const Route = createFileRoute("/")({
 type Mode = "idle" | "listening" | "thinking" | "speaking";
 type Turn = { role: "user" | "assistant"; content: string };
 
-const FRAME_INTERVAL_MS = 4000;
-const CHANGE_THRESHOLD = 6; // mean pixel difference to count as "screen changed"
+const FRAME_INTERVAL_MS = 1500;
+const CHANGE_THRESHOLD = 2.5; // mean pixel difference to count as "screen changed"
 
 function Index() {
   const [mode, setMode] = useState<Mode>("idle");
@@ -69,29 +69,51 @@ function Index() {
     };
   }, [stopWatching]);
 
-  const speak = useCallback(async (text: string) => {
-    setMode("speaking");
-    speakingRef.current = true;
-    try {
-      const res = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) throw new Error("voice");
-      const blob = await res.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      audioRef.current = audio;
-      audio.onended = () => {
+  const speakRemote = useCallback(async (text: string) => {
+    const res = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error("voice");
+    const blob = await res.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+    audioRef.current = audio;
+    await new Promise<void>((resolve) => {
+      audio.onended = () => resolve();
+      audio.onerror = () => resolve();
+      void audio.play().catch(() => resolve());
+    });
+  }, []);
+
+  const speak = useCallback(
+    async (text: string) => {
+      setMode("speaking");
+      speakingRef.current = true;
+      try {
+        const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+        if (synth) {
+          // Instant, local voice — no network round trip.
+          synth.cancel();
+          await new Promise<void>((resolve) => {
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 1.05;
+            u.onend = () => resolve();
+            u.onerror = () => resolve();
+            synth.speak(u);
+          });
+        } else {
+          await speakRemote(text);
+        }
+      } catch {
+        /* stay silent rather than break the loop */
+      } finally {
         speakingRef.current = false;
         setMode("idle");
-      };
-      await audio.play();
-    } catch {
-      speakingRef.current = false;
-      setMode("idle");
-    }
-  }, []);
+      }
+    },
+    [speakRemote],
+  );
 
   const send = useCallback(
     async (payload: { audio?: string; format?: string; text?: string; image?: string }) => {
@@ -114,7 +136,7 @@ function Index() {
           { role: "user", content: heard },
           { role: "assistant", content: silent ? "…" : reply },
         ]);
-        if (!silent) await speak(reply);
+        if (!silent) void speak(reply);
         else setMode("idle");
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -126,7 +148,7 @@ function Index() {
 
   const captureFrame = useCallback(async () => {
     const stream = watchStreamRef.current;
-    if (!stream || busyRef.current || speakingRef.current) return;
+    if (!stream || busyRef.current) return;
     const track = stream.getVideoTracks()[0];
     if (!track || track.readyState !== "live") return;
 
