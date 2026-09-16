@@ -1,6 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Square, Loader2, Volume2, MonitorPlay, MonitorOff } from "lucide-react";
+import {
+  Mic,
+  Square,
+  Loader2,
+  Volume2,
+  MonitorPlay,
+  MonitorOff,
+  SendHorizontal,
+} from "lucide-react";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -36,6 +45,8 @@ function Index() {
   const [error, setError] = useState<string | null>(null);
   const [watching, setWatching] = useState(false);
   const [goal, setGoal] = useState("");
+  const [chat, setChat] = useState("");
+
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -47,6 +58,9 @@ function Index() {
   const speakingRef = useRef(false);
   const goalRef = useRef("");
   goalRef.current = goal;
+  const chatRef = useRef("");
+  chatRef.current = chat;
+
   const turnsRef = useRef<Turn[]>([]);
   turnsRef.current = turns;
 
@@ -146,11 +160,11 @@ function Index() {
     [speak],
   );
 
-  const captureFrame = useCallback(async () => {
+  const grabFrame = useCallback(async () => {
     const stream = watchStreamRef.current;
-    if (!stream || busyRef.current) return;
+    if (!stream) return null;
     const track = stream.getVideoTracks()[0];
-    if (!track || track.readyState !== "live") return;
+    if (!track || track.readyState !== "live") return null;
 
     const video = document.createElement("video");
     video.muted = true;
@@ -158,7 +172,7 @@ function Index() {
     await video.play().catch(() => {});
     if (!video.videoWidth) {
       video.srcObject = null;
-      return;
+      return null;
     }
 
     const canvas = document.createElement("canvas");
@@ -169,6 +183,13 @@ function Index() {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     video.pause();
     video.srcObject = null;
+    return canvas;
+  }, []);
+
+  const captureFrame = useCallback(async () => {
+    if (busyRef.current) return;
+    const canvas = await grabFrame();
+    if (!canvas) return;
 
     // Change detection on a tiny downsample
     const small = document.createElement("canvas");
@@ -204,7 +225,29 @@ function Index() {
     } finally {
       busyRef.current = false;
     }
-  }, [send]);
+  }, [grabFrame, send]);
+
+  const sendChat = useCallback(async () => {
+    const text = chatRef.current.trim();
+    if (!text || busyRef.current) return;
+    setChat("");
+    busyRef.current = true;
+    try {
+      const canvas = await grabFrame();
+      const image = canvas ? canvas.toDataURL("image/jpeg", 0.7).split(",")[1] : undefined;
+      const g = goalRef.current.trim();
+      await send({
+        ...(image ? { image } : {}),
+
+        text: image
+          ? `${g ? `My goal is: ${g}. ` : ""}Here is my screen right now. I'm asking you: ${text}. Answer me directly — never reply SKIP to a question I typed.`
+          : text,
+      });
+    } finally {
+      busyRef.current = false;
+    }
+  }, [grabFrame, send]);
+
 
   const startWatching = useCallback(async () => {
     setError(null);
@@ -356,7 +399,7 @@ function Index() {
           )}
         </div>
 
-        <section className="mt-12 w-full space-y-5 pb-16" aria-live="polite">
+        <section className="mt-12 w-full space-y-5 pb-4" aria-live="polite">
           {turns.map((turn, i) => (
             <div
               key={i}
@@ -374,6 +417,37 @@ function Index() {
             </div>
           ))}
         </section>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void sendChat();
+          }}
+          className="sticky bottom-4 mt-auto flex w-full items-end gap-2 rounded-2xl border border-border bg-card/90 p-2 backdrop-blur"
+        >
+          <textarea
+            value={chat}
+            onChange={(e) => setChat(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void sendChat();
+              }
+            }}
+            rows={1}
+            placeholder={watching ? "Type instead of talking — I can see your screen" : "Type a message…"}
+            className="max-h-32 flex-1 resize-none bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+          <button
+            type="submit"
+            aria-label="Send message"
+            disabled={!chat.trim() || mode === "thinking"}
+            className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            <SendHorizontal className="size-4" />
+          </button>
+        </form>
+
       </div>
     </main>
   );
