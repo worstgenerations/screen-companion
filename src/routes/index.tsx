@@ -69,29 +69,51 @@ function Index() {
     };
   }, [stopWatching]);
 
-  const speak = useCallback(async (text: string) => {
-    setMode("speaking");
-    speakingRef.current = true;
-    try {
-      const res = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) throw new Error("voice");
-      const blob = await res.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      audioRef.current = audio;
-      audio.onended = () => {
+  const speakRemote = useCallback(async (text: string) => {
+    const res = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error("voice");
+    const blob = await res.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+    audioRef.current = audio;
+    await new Promise<void>((resolve) => {
+      audio.onended = () => resolve();
+      audio.onerror = () => resolve();
+      void audio.play().catch(() => resolve());
+    });
+  }, []);
+
+  const speak = useCallback(
+    async (text: string) => {
+      setMode("speaking");
+      speakingRef.current = true;
+      try {
+        const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+        if (synth) {
+          // Instant, local voice — no network round trip.
+          synth.cancel();
+          await new Promise<void>((resolve) => {
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 1.05;
+            u.onend = () => resolve();
+            u.onerror = () => resolve();
+            synth.speak(u);
+          });
+        } else {
+          await speakRemote(text);
+        }
+      } catch {
+        /* stay silent rather than break the loop */
+      } finally {
         speakingRef.current = false;
         setMode("idle");
-      };
-      await audio.play();
-    } catch {
-      speakingRef.current = false;
-      setMode("idle");
-    }
-  }, []);
+      }
+    },
+    [speakRemote],
+  );
 
   const send = useCallback(
     async (payload: { audio?: string; format?: string; text?: string; image?: string }) => {
