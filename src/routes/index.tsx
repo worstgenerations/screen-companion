@@ -136,7 +136,7 @@ function Index() {
           { role: "user", content: heard },
           { role: "assistant", content: silent ? "…" : reply },
         ]);
-        if (!silent) await speak(reply);
+        if (!silent) void speak(reply);
         else setMode("idle");
       } catch (e) {
         setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -148,7 +148,7 @@ function Index() {
 
   const captureFrame = useCallback(async () => {
     const stream = watchStreamRef.current;
-    if (!stream || busyRef.current || speakingRef.current) return;
+    if (!stream || busyRef.current) return;
     const track = stream.getVideoTracks()[0];
     if (!track || track.readyState !== "live") return;
 
