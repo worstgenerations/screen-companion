@@ -27,8 +27,8 @@ export const Route = createFileRoute("/")({
 type Mode = "idle" | "listening" | "thinking" | "speaking";
 type Turn = { role: "user" | "assistant"; content: string };
 
-const FRAME_INTERVAL_MS = 4000;
-const CHANGE_THRESHOLD = 6; // mean pixel difference to count as "screen changed"
+const FRAME_INTERVAL_MS = 1500;
+const CHANGE_THRESHOLD = 2.5; // mean pixel difference to count as "screen changed"
 
 function Index() {
   const [mode, setMode] = useState<Mode>("idle");
