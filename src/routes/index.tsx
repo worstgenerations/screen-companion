@@ -1,6 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Square, Loader2, Volume2, MonitorPlay, MonitorOff } from "lucide-react";
+import {
+  Mic,
+  Square,
+  Loader2,
+  Volume2,
+  MonitorPlay,
+  MonitorOff,
+  SendHorizontal,
+} from "lucide-react";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
