@@ -300,7 +300,15 @@ function Index() {
           aria-label={label}
           className="group relative my-12 grid size-56 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
         >
-          <span className={`orb orb-${mode}`} />
+          <span className="orb-stage" data-mode={mode}>
+            <span className="orb-swirl orb-swirl-1" />
+            <span className="orb-swirl orb-swirl-2" />
+            <span className="orb-swirl orb-swirl-3" />
+            <span className="orb-glass" />
+            <span className="orb-ring orb-ring-1" />
+            <span className="orb-ring orb-ring-2" />
+          </span>
+
           <span className="relative z-10 text-aura-glyph">
             {mode === "thinking" ? (
               <Loader2 className="size-9 animate-spin" />
