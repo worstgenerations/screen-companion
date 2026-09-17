@@ -281,6 +281,9 @@ function Index() {
           setError("I didn't hear anything — hold on a little longer next time.");
           return;
         }
+        // If we're watching, attach a fresh frame so the answer matches the screen.
+        const canvas = watchStreamRef.current ? await grabFrame() : null;
+        const image = canvas ? canvas.toDataURL("image/jpeg", 0.7).split(",")[1] : undefined;
         const buf = await blob.arrayBuffer();
         let binary = "";
         const bytes = new Uint8Array(buf);
@@ -288,7 +291,17 @@ function Index() {
           binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
         }
         const format = recorder.mimeType.includes("mp4") ? "m4a" : "webm";
-        await send({ audio: btoa(binary), format });
+        const g = goalRef.current.trim();
+        await send({
+          audio: btoa(binary),
+          format,
+          ...(image ? { image } : {}),
+          ...(image
+            ? {
+                text: `${g ? `My goal is: ${g}. ` : ""}Here is my screen right now. Listen to the audio of what I said, then answer it using what you see — never reply SKIP to something I said.`,
+              }
+            : {}),
+        });
       };
       recorderRef.current = recorder;
       recorder.start();
@@ -296,7 +309,7 @@ function Index() {
     } catch {
       setError("I need microphone access to listen. Allow it and tap the orb again.");
     }
-  }, [send]);
+  }, [send, grabFrame]);
 
   const onOrbClick = useCallback(() => {
     if (mode === "listening") {

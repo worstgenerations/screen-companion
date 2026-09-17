@@ -34,7 +34,20 @@ export const Route = createFileRoute("/api/ask")({
         const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
 
         const content: Record<string, unknown>[] = [];
-        if (body.image) {
+        if (body.audio && body.image) {
+          content.push({
+            type: "text",
+            text: `${body.text ?? "Listen to the audio and answer it using the screenshot."}\n\nReply with JSON only: {"heard": "<what the person said>", "reply": "<your spoken answer>"}`,
+          });
+          content.push({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${body.image}` },
+          });
+          content.push({
+            type: "input_audio",
+            input_audio: { data: body.audio, format: body.format || "webm" },
+          });
+        } else if (body.image) {
           content.push({
             type: "text",
             text: `${body.text ?? "Here is my screen. Guide me."}\n\nReply with JSON only: {"heard": "<what they asked, or 'screen check' if this is just a screenshot>", "reply": "<your spoken answer, or exactly SKIP if there is nothing new to say>"}`,
