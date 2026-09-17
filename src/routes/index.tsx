@@ -309,7 +309,7 @@ function Index() {
     } catch {
       setError("I need microphone access to listen. Allow it and tap the orb again.");
     }
-  }, [send]);
+  }, [send, grabFrame]);
 
   const onOrbClick = useCallback(() => {
     if (mode === "listening") {
