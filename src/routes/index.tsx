@@ -340,8 +340,9 @@ function Index() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-aura-field" aria-hidden="true" />
+      <div className="aura-ambient" data-mode={mode} aria-hidden="true" />
 
-      <div className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center px-6 py-14">
+      <div className="relative mx-auto flex min-h-screen max-w-2xl flex-col items-center px-6 py-12">
         <header className="text-center">
           <h1 className="font-display text-4xl tracking-tight sm:text-5xl">Aura</h1>
           <p className="mt-3 max-w-md text-balance text-sm text-muted-foreground">
@@ -354,9 +355,10 @@ function Index() {
           type="button"
           onClick={onOrbClick}
           aria-label={label}
-          className="group relative my-12 grid size-56 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+          className="group relative my-10 grid size-64 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background sm:size-72"
         >
           <span className="orb-stage" data-mode={mode}>
+            <span className="orb-rim" />
             <span className="orb-swirl orb-swirl-1" />
             <span className="orb-swirl orb-swirl-2" />
             <span className="orb-swirl orb-swirl-3" />
