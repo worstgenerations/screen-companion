@@ -317,6 +317,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      melo_entitled: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
       account_status:
