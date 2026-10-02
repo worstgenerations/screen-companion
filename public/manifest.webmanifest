@@ -1,7 +1,7 @@
 {
-  "name": "Aura — Your Screen Guide",
-  "short_name": "Aura",
-  "description": "A Siri-style assistant that watches your screen and speaks the next step out loud.",
+  "name": "Melo AI — Your Screen Guide",
+  "short_name": "Melo",
+  "description": "Melo watches your screen and talks you through anything you're trying to do.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a14",
