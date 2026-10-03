@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { lovable } from "@/integrations/lovable";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -28,6 +29,13 @@ function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  useEffect(() => {
+    const go = (has: boolean) => has && void navigate({ to: "/melo" });
+    void supabase.auth.getSession().then(({ data }) => go(!!data.session));
+    const { data } = supabase.auth.onAuthStateChange((_e, s) => go(!!s));
+    return () => data.subscription.unsubscribe();
+  }, [navigate]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -50,7 +58,7 @@ function AuthPage() {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) throw err;
       }
-      void navigate({ to: "/dashboard" });
+      void navigate({ to: "/melo" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -73,13 +81,31 @@ function AuthPage() {
             </span>
           </Link>
           <h1 className="mt-5 font-display text-2xl tracking-tight">
-            {mode === "signup" ? "Start your free trial" : "Welcome back"}
+            {mode === "signup" ? "Welcome to Melo" : "Welcome back"}
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {mode === "signup"
-              ? "7 days of Melo AI, free. Cancel anytime."
+              ? "Your AI assistant that sees what you see."
               : "Sign in to continue to your dashboard."}
           </p>
+        </div>
+
+        <div className="mb-3 space-y-2">
+          {(["google", "apple"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={async () => {
+                setError(null);
+                const r = await lovable.auth.signInWithOAuth(p, { redirect_uri: `${window.location.origin}/auth` });
+                if (r.error) setError(r.error.message ?? "Sign-in failed.");
+              }}
+              className="w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium transition-colors hover:bg-accent"
+            >
+              Continue with {p === "google" ? "Google" : "Apple"}
+            </button>
+          ))}
+          <p className="pt-2 text-center text-xs text-muted-foreground">or use email</p>
         </div>
 
         <form
