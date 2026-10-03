@@ -47,6 +47,19 @@ Rules for every reply:
 - If they are on track, confirm briefly and give the next single step.
 - Only reply with exactly SKIP when the screen is literally the same as the last one you described and you already told them the step. Never SKIP on the first screenshot.`;
 
+const PERSONAS: Record<string, string> = {
+  classic: "",
+  playful: "Personality: playful, upbeat and energetic, with light humor.",
+  cute: "Personality: cute and expressive, cheerful encouragement.",
+  commander: "Personality: firm, direct and authoritative, like a calm drill instructor. Very concise.",
+  mentor: "Personality: calm, patient mentor who briefly explains why each step matters.",
+  savage: "Personality: sarcastic and blunt but still genuinely helpful. Never insulting about the person.",
+};
+function personaLine(p?: string) {
+  const line = p ? PERSONAS[p] : "";
+  return line ? `\n\n${line}` : "";
+}
+
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -129,6 +142,10 @@ const askInput = z.object({
   image: z.string().max(8_000_000).optional(),
   audio: z.string().max(12_000_000).optional(),
   format: z.string().max(10).optional(),
+  conversationId: z.string().uuid().optional(),
+  source: z.enum(["text", "voice", "screen"]).optional(),
+  userText: z.string().max(4000).optional(),
+  personality: z.string().max(40).optional(),
   history: z
     .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) }))
     .max(20)
@@ -218,7 +235,7 @@ export const meloAsk = createServerFn({ method: "POST" })
       body: JSON.stringify({
         model: "google/gemini-3.8-flash",
         messages: [
-          { role: "system", content: SYSTEM },
+          { role: "system", content: SYSTEM + personaLine(data.personality) },
           ...history.map((t: Turn) => ({ role: t.role, content: t.content })),
           { role: "user", content },
         ],
@@ -278,6 +295,35 @@ export const meloAsk = createServerFn({ method: "POST" })
         input_tokens: inputTokens,
         output_tokens: outputTokens,
       });
+    }
+
+    // 5. Persist the exchange to the conversation (ownership verified).
+    if (data.conversationId) {
+      const { data: conv } = await supabaseAdmin
+        .from("conversations")
+        .select("id, title, user_id")
+        .eq("id", data.conversationId)
+        .maybeSingle();
+      if (conv && conv.user_id === userId) {
+        const userContent = (data.userText || heard || data.text || "").trim() || "…";
+        const silent = reply.trim().toUpperCase().startsWith("SKIP");
+        const rows = [
+          { conversation_id: conv.id, user_id: userId, role: "user", content: userContent, source: data.source ?? "text" },
+        ];
+        if (!silent) rows.push({ conversation_id: conv.id, user_id: userId, role: "assistant", content: reply, source: data.source ?? "text" });
+        const { error: msgErr } = await supabaseAdmin.from("messages").insert(rows);
+        if (msgErr) console.error("message save failed", msgErr);
+        await supabaseAdmin
+          .from("conversations")
+          .update({
+            updated_at: new Date().toISOString(),
+            model: "google/gemini-3.8-flash",
+            ...(data.source === "voice" ? { had_voice: true } : {}),
+            ...(data.image ? { had_screen: true } : {}),
+            ...(conv.title === "New chat" ? { title: userContent.slice(0, 60) } : {}),
+          })
+          .eq("id", conv.id);
+      }
     }
 
     return {
