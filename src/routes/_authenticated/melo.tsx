@@ -275,33 +275,46 @@ function Workspace() {
   }, [newConv, navigate, qc]);
 
   const send = useCallback(
-    async (opts: { userText?: string; source: "text" | "voice" | "screen"; auto?: boolean }) => {
-      if (busyRef.current) return;
+    async (opts: { userText?: string; source: "text" | "voice" | "screen"; auto?: boolean; kind?: "first" | "stuck" }) => {
+      if (busyRef.current) {
+        // Never drop what the person says — run it right after the current request.
+        if (!opts.auto) pendingRef.current = opts;
+        return;
+      }
       busyRef.current = true;
       setError(null);
+      haltAudio();
       setMode("thinking");
       const userText = opts.userText?.trim();
       if (userText) setTurns((p) => [...p, { id: crypto.randomUUID(), role: "user", content: userText }]);
       try {
         const id = await ensureConversation();
         const image = streamRef.current ? grabFrame() : undefined;
+        if (opts.auto && !image) return;
         if (image) setStats((s) => ({ ...s, sent: s.sent + 1 }));
         const prompt = opts.auto
-          ? "My screen just changed. If I'm on track give the next single step; if I clicked something wrong say so; if nothing needs a reaction reply exactly SKIP."
+          ? opts.kind === "first"
+            ? "I just started sharing my screen. Briefly say what you see and ask what I want to do, or if my goal is already clear, give the first step. Never reply SKIP."
+            : opts.kind === "stuck"
+              ? "My screen hasn't changed for a while — I might be stuck. If there's a clear next step toward my goal, tell me exactly what to click. If there's nothing useful to add, reply exactly SKIP."
+              : "My screen just changed. If I'm on track give the next single step; if I clicked something wrong say so; if nothing needs a reaction reply exactly SKIP."
           : image
             ? `Here is my screen right now. I said: "${userText}". Answer directly using what you see — never reply SKIP.`
             : userText;
-        const res = await ask({
-          data: {
-            text: prompt,
-            ...(image ? { image } : {}),
-            conversationId: id,
-            source: opts.source,
-            userText: opts.auto ? "(screen changed)" : userText,
-            personality: personaRef.current,
-            history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
-          },
-        });
+        const res = await Promise.race([
+          ask({
+            data: {
+              text: prompt,
+              ...(image ? { image } : {}),
+              conversationId: id,
+              source: opts.source,
+              userText: opts.auto ? "(screen check)" : userText,
+              personality: personaRef.current,
+              history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
+            },
+          }),
+          new Promise<never>((_, rej) => window.setTimeout(() => rej(new Error("Melo took too long — try again.")), 30000)),
+        ]);
         if (!res.ok) {
           setError(
             res.reason === "trial_expired"
