@@ -483,7 +483,7 @@ function Workspace() {
     () => () => {
       micWantedRef.current = false;
       recRef.current?.stop();
-      window.speechSynthesis?.cancel();
+      haltAudio();
       streamRef.current?.getTracks().forEach((t) => t.stop());
     },
     [],
@@ -491,7 +491,7 @@ function Workspace() {
 
   // reset per conversation switch
   useEffect(() => {
-    window.speechSynthesis?.cancel();
+    haltAudio();
     textareaRef.current?.focus();
   }, [convId]);
 
@@ -512,7 +512,7 @@ function Workspace() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ["workspace"] });
 
   const goNew = () => {
-    window.speechSynthesis?.cancel();
+    haltAudio();
     void navigate({ to: "/melo", search: {} });
   };
 
