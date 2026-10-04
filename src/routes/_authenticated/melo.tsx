@@ -78,8 +78,9 @@ const VOICE_TUNING: Record<string, { rate: number; pitch: number }> = {
 };
 
 const FILLER = /^(uh+|um+|hmm+|mm+|okay|ok|yeah|yep|yes|no|right|cool|alright|ah+|oh+|huh|so|well|thanks|thank you)[.!?, ]*$/i;
-const MEANINGFUL_CHANGE = 8; // mean pixel diff for an automatic "screen changed" check-in
-const AUTO_CHECK_MIN_GAP_MS = 12000;
+const MEANINGFUL_CHANGE = 6; // mean pixel diff for an automatic "screen changed" check-in
+const AUTO_CHECK_MIN_GAP_MS = 8000;
+const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SR = any;
@@ -136,6 +137,8 @@ function Workspace() {
   const recRef = useRef<SR>(null);
   const micWantedRef = useRef(false);
   const busyRef = useRef(false);
+  const pendingRef = useRef<{ userText?: string; source: "text" | "voice" | "screen" } | null>(null);
+  const interimRef = useRef("");
   const replyRef = useRef("");
   const lastThumbRef = useRef<Uint8ClampedArray | null>(null);
   const lastAutoRef = useRef(0);
@@ -183,30 +186,86 @@ function Workspace() {
   }, [stopSharing]);
 
   // ---------- speech out ----------
-  const stopSpeaking = useCallback(() => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speakTokenRef = useRef(0);
+  const speakWatchRef = useRef<number | null>(null);
+
+  const haltAudio = useCallback(() => {
+    speakTokenRef.current++;
+    if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
+    speakWatchRef.current = null;
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.src = "";
+    }
+    audioRef.current = null;
     window.speechSynthesis?.cancel();
-    replyRef.current = "";
-    if (modeRef.current === "speaking") setMode(micWantedRef.current ? "listening" : "idle");
   }, []);
 
-  const speak = useCallback((text: string) => {
-    const synth = window.speechSynthesis;
-    if (!synth) return setMode(micWantedRef.current ? "listening" : "idle");
-    synth.cancel();
-    replyRef.current = text.toLowerCase();
-    const u = new SpeechSynthesisUtterance(text);
-    const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
-    u.rate = t.rate;
-    u.pitch = t.pitch;
-    const done = () => {
-      replyRef.current = "";
-      setMode(micWantedRef.current ? "listening" : "idle");
-    };
-    u.onend = done;
-    u.onerror = done;
-    setMode("speaking");
-    synth.speak(u);
-  }, []);
+  const stopSpeaking = useCallback(() => {
+    haltAudio();
+    replyRef.current = "";
+    if (modeRef.current === "speaking") setMode(micWantedRef.current ? "listening" : "idle");
+  }, [haltAudio]);
+
+  const speak = useCallback(
+    async (text: string) => {
+      haltAudio();
+      const token = speakTokenRef.current;
+      replyRef.current = text.toLowerCase();
+      setMode("speaking");
+      const done = () => {
+        if (token !== speakTokenRef.current) return;
+        if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
+        speakWatchRef.current = null;
+        audioRef.current = null;
+        replyRef.current = "";
+        setMode(micWantedRef.current ? "listening" : "idle");
+      };
+      // Watchdog: never stay stuck in "speaking" (browser voices sometimes never fire onend).
+      speakWatchRef.current = window.setTimeout(done, Math.min(45000, 4000 + text.length * 90));
+
+      // 1) Natural high-quality voice
+      try {
+        const r = await fetch("/api/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (token !== speakTokenRef.current) return;
+        if (r.ok) {
+          const url = URL.createObjectURL(await r.blob());
+          if (token !== speakTokenRef.current) return URL.revokeObjectURL(url);
+          const a = new Audio(url);
+          const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
+          a.playbackRate = Math.min(1.25, Math.max(0.85, t.rate));
+          a.onended = () => {
+            URL.revokeObjectURL(url);
+            done();
+          };
+          a.onerror = done;
+          audioRef.current = a;
+          await a.play();
+          return;
+        }
+      } catch {
+        /* fall back */
+      }
+      if (token !== speakTokenRef.current) return;
+      // 2) Fallback: device voice
+      const synth = window.speechSynthesis;
+      if (!synth) return done();
+      const u = new SpeechSynthesisUtterance(text);
+      const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
+      u.rate = t.rate;
+      u.pitch = t.pitch;
+      u.onend = done;
+      u.onerror = done;
+      synth.speak(u);
+    },
+    [haltAudio],
+  );
 
   // ---------- ask ----------
   const ensureConversation = useCallback(async () => {
@@ -219,33 +278,46 @@ function Workspace() {
   }, [newConv, navigate, qc]);
 
   const send = useCallback(
-    async (opts: { userText?: string; source: "text" | "voice" | "screen"; auto?: boolean }) => {
-      if (busyRef.current) return;
+    async (opts: { userText?: string; source: "text" | "voice" | "screen"; auto?: boolean; kind?: "first" | "stuck" }) => {
+      if (busyRef.current) {
+        // Never drop what the person says — run it right after the current request.
+        if (!opts.auto) pendingRef.current = opts;
+        return;
+      }
       busyRef.current = true;
       setError(null);
+      haltAudio();
       setMode("thinking");
       const userText = opts.userText?.trim();
       if (userText) setTurns((p) => [...p, { id: crypto.randomUUID(), role: "user", content: userText }]);
       try {
         const id = await ensureConversation();
         const image = streamRef.current ? grabFrame() : undefined;
+        if (opts.auto && !image) return;
         if (image) setStats((s) => ({ ...s, sent: s.sent + 1 }));
         const prompt = opts.auto
-          ? "My screen just changed. If I'm on track give the next single step; if I clicked something wrong say so; if nothing needs a reaction reply exactly SKIP."
+          ? opts.kind === "first"
+            ? "I just started sharing my screen. Briefly say what you see and ask what I want to do, or if my goal is already clear, give the first step. Never reply SKIP."
+            : opts.kind === "stuck"
+              ? "My screen hasn't changed for a while — I might be stuck. If there's a clear next step toward my goal, tell me exactly what to click. If there's nothing useful to add, reply exactly SKIP."
+              : "My screen just changed. If I'm on track give the next single step; if I clicked something wrong say so; if nothing needs a reaction reply exactly SKIP."
           : image
             ? `Here is my screen right now. I said: "${userText}". Answer directly using what you see — never reply SKIP.`
             : userText;
-        const res = await ask({
-          data: {
-            text: prompt,
-            ...(image ? { image } : {}),
-            conversationId: id,
-            source: opts.source,
-            userText: opts.auto ? "(screen changed)" : userText,
-            personality: personaRef.current,
-            history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
-          },
-        });
+        const res = await Promise.race([
+          ask({
+            data: {
+              text: prompt,
+              ...(image ? { image } : {}),
+              conversationId: id,
+              source: opts.source,
+              userText: opts.auto ? "(screen check)" : userText,
+              personality: personaRef.current,
+              history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
+            },
+          }),
+          new Promise<never>((_, rej) => window.setTimeout(() => rej(new Error("Melo took too long — try again.")), 30000)),
+        ]);
         if (!res.ok) {
           setError(
             res.reason === "trial_expired"
@@ -271,16 +343,22 @@ function Workspace() {
         setMode(micWantedRef.current ? "listening" : "idle");
       } finally {
         busyRef.current = false;
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next) void sendRef.current(next);
       }
     },
-    [ask, ensureConversation, grabFrame, speak, qc],
+    [ask, ensureConversation, grabFrame, speak, haltAudio, qc],
   );
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // local screen awareness: thumbnail every 2s, AI only on a big change
+  // local screen awareness: thumbnail every 2s; AI on first look, big change, or when stuck
   useEffect(() => {
     if (!sharing) return;
+    let firstDone = false;
+    let lastChangeAt = Date.now();
+    let stuckNudged = false;
     const t = window.setInterval(() => {
       const v = videoRef.current;
       if (!v || !v.videoWidth) return;
@@ -293,14 +371,31 @@ function Workspace() {
       setStats((s) => ({ ...s, captured: s.captured + 1 }));
       const last = lastThumbRef.current;
       lastThumbRef.current = px;
-      if (!last || !convRef.current || turnsRef.current.length === 0) return;
+      const now = Date.now();
+      const free = modeRef.current !== "speaking" && !busyRef.current && !interimRef.current;
+      if (!firstDone) {
+        if (!free) return;
+        firstDone = true;
+        lastAutoRef.current = now;
+        void sendRef.current({ source: "screen", auto: true, kind: "first" });
+        return;
+      }
+      if (!last) return;
       let diff = 0;
       for (let i = 0; i < px.length; i += 4) diff += Math.abs(px[i]! - last[i]!);
       const mean = diff / (px.length / 4);
-      const now = Date.now();
-      if (mean > MEANINGFUL_CHANGE && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS && modeRef.current !== "speaking" && !busyRef.current) {
+      if (mean > 1.5) {
+        lastChangeAt = now;
+        stuckNudged = false;
+      }
+      if (!free) return;
+      if (mean > MEANINGFUL_CHANGE && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS) {
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true });
+      } else if (!stuckNudged && now - lastChangeAt > STUCK_AFTER_MS && now - lastAutoRef.current > STUCK_AFTER_MS) {
+        stuckNudged = true;
+        lastAutoRef.current = now;
+        void sendRef.current({ source: "screen", auto: true, kind: "stuck" });
       }
     }, 2000);
     return () => window.clearInterval(t);
@@ -342,19 +437,21 @@ function Workspace() {
         const text: string = r[0].transcript.trim();
         if (r.isFinal) {
           setInterim("");
+          interimRef.current = "";
           if (!text || FILLER.test(text)) continue;
           // ignore Melo hearing itself
           if (replyRef.current && replyRef.current.includes(text.toLowerCase())) continue;
-          window.speechSynthesis?.cancel();
+          haltAudio();
           replyRef.current = "";
           void sendRef.current({ userText: text, source: "voice" });
         } else partial += text;
       }
+      interimRef.current = partial;
       if (partial) {
         setInterim(partial);
         // barge-in: user talking over Melo
         if (modeRef.current === "speaking" && partial.split(" ").length >= 2 && !replyRef.current.includes(partial.toLowerCase())) {
-          window.speechSynthesis?.cancel();
+          haltAudio();
           replyRef.current = "";
           setMode("listening");
         }
@@ -380,13 +477,13 @@ function Workspace() {
     rec.start();
     setMicOn(true);
     if (modeRef.current === "idle") setMode("listening");
-  }, [stopMic]);
+  }, [stopMic, haltAudio]);
 
   useEffect(
     () => () => {
       micWantedRef.current = false;
       recRef.current?.stop();
-      window.speechSynthesis?.cancel();
+      haltAudio();
       streamRef.current?.getTracks().forEach((t) => t.stop());
     },
     [],
@@ -394,7 +491,7 @@ function Workspace() {
 
   // reset per conversation switch
   useEffect(() => {
-    window.speechSynthesis?.cancel();
+    haltAudio();
     textareaRef.current?.focus();
   }, [convId]);
 
@@ -415,7 +512,7 @@ function Workspace() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ["workspace"] });
 
   const goNew = () => {
-    window.speechSynthesis?.cancel();
+    haltAudio();
     void navigate({ to: "/melo", search: {} });
   };
 
