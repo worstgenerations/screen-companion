@@ -78,8 +78,9 @@ const VOICE_TUNING: Record<string, { rate: number; pitch: number }> = {
 };
 
 const FILLER = /^(uh+|um+|hmm+|mm+|okay|ok|yeah|yep|yes|no|right|cool|alright|ah+|oh+|huh|so|well|thanks|thank you)[.!?, ]*$/i;
-const MEANINGFUL_CHANGE = 8; // mean pixel diff for an automatic "screen changed" check-in
-const AUTO_CHECK_MIN_GAP_MS = 12000;
+const MEANINGFUL_CHANGE = 6; // mean pixel diff for an automatic "screen changed" check-in
+const AUTO_CHECK_MIN_GAP_MS = 8000;
+const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SR = any;
@@ -136,6 +137,8 @@ function Workspace() {
   const recRef = useRef<SR>(null);
   const micWantedRef = useRef(false);
   const busyRef = useRef(false);
+  const pendingRef = useRef<{ userText?: string; source: "text" | "voice" | "screen" } | null>(null);
+  const interimRef = useRef("");
   const replyRef = useRef("");
   const lastThumbRef = useRef<Uint8ClampedArray | null>(null);
   const lastAutoRef = useRef(0);
@@ -434,19 +437,21 @@ function Workspace() {
         const text: string = r[0].transcript.trim();
         if (r.isFinal) {
           setInterim("");
+          interimRef.current = "";
           if (!text || FILLER.test(text)) continue;
           // ignore Melo hearing itself
           if (replyRef.current && replyRef.current.includes(text.toLowerCase())) continue;
-          window.speechSynthesis?.cancel();
+          haltAudio();
           replyRef.current = "";
           void sendRef.current({ userText: text, source: "voice" });
         } else partial += text;
       }
+      interimRef.current = partial;
       if (partial) {
         setInterim(partial);
         // barge-in: user talking over Melo
         if (modeRef.current === "speaking" && partial.split(" ").length >= 2 && !replyRef.current.includes(partial.toLowerCase())) {
-          window.speechSynthesis?.cancel();
+          haltAudio();
           replyRef.current = "";
           setMode("listening");
         }
@@ -472,7 +477,7 @@ function Workspace() {
     rec.start();
     setMicOn(true);
     if (modeRef.current === "idle") setMode("listening");
-  }, [stopMic]);
+  }, [stopMic, haltAudio]);
 
   useEffect(
     () => () => {
