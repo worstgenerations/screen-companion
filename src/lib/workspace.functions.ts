@@ -2,6 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
+function strip<T extends object>(o: T) {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
 export const listWorkspace = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -50,7 +54,7 @@ export const updateConversation = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, projectId, ...rest } = data;
-    const patch = { ...rest, ...(projectId !== undefined ? { project_id: projectId } : {}) };
+    const patch = { ...strip(rest), ...(projectId !== undefined ? { project_id: projectId } : {}) };
     const { error } = await context.supabase.from("conversations").update(patch).eq("id", id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -84,7 +88,7 @@ export const saveProject = createServerFn({ method: "POST" })
       if (error) throw new Error(error.message);
       return row;
     }
-    const { error } = await context.supabase.from("projects").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", id);
+    const { error } = await context.supabase.from("projects").update({ ...strip(rest), updated_at: new Date().toISOString() }).eq("id", id);
     if (error) throw new Error(error.message);
     return { id };
   });
