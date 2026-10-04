@@ -340,16 +340,22 @@ function Workspace() {
         setMode(micWantedRef.current ? "listening" : "idle");
       } finally {
         busyRef.current = false;
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next) void sendRef.current(next);
       }
     },
-    [ask, ensureConversation, grabFrame, speak, qc],
+    [ask, ensureConversation, grabFrame, speak, haltAudio, qc],
   );
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // local screen awareness: thumbnail every 2s, AI only on a big change
+  // local screen awareness: thumbnail every 2s; AI on first look, big change, or when stuck
   useEffect(() => {
     if (!sharing) return;
+    let firstDone = false;
+    let lastChangeAt = Date.now();
+    let stuckNudged = false;
     const t = window.setInterval(() => {
       const v = videoRef.current;
       if (!v || !v.videoWidth) return;
@@ -362,14 +368,31 @@ function Workspace() {
       setStats((s) => ({ ...s, captured: s.captured + 1 }));
       const last = lastThumbRef.current;
       lastThumbRef.current = px;
-      if (!last || !convRef.current || turnsRef.current.length === 0) return;
+      const now = Date.now();
+      const free = modeRef.current !== "speaking" && !busyRef.current && !interimRef.current;
+      if (!firstDone) {
+        if (!free) return;
+        firstDone = true;
+        lastAutoRef.current = now;
+        void sendRef.current({ source: "screen", auto: true, kind: "first" });
+        return;
+      }
+      if (!last) return;
       let diff = 0;
       for (let i = 0; i < px.length; i += 4) diff += Math.abs(px[i]! - last[i]!);
       const mean = diff / (px.length / 4);
-      const now = Date.now();
-      if (mean > MEANINGFUL_CHANGE && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS && modeRef.current !== "speaking" && !busyRef.current) {
+      if (mean > 1.5) {
+        lastChangeAt = now;
+        stuckNudged = false;
+      }
+      if (!free) return;
+      if (mean > MEANINGFUL_CHANGE && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS) {
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true });
+      } else if (!stuckNudged && now - lastChangeAt > STUCK_AFTER_MS && now - lastAutoRef.current > STUCK_AFTER_MS) {
+        stuckNudged = true;
+        lastAutoRef.current = now;
+        void sendRef.current({ source: "screen", auto: true, kind: "stuck" });
       }
     }, 2000);
     return () => window.clearInterval(t);
