@@ -183,30 +183,86 @@ function Workspace() {
   }, [stopSharing]);
 
   // ---------- speech out ----------
-  const stopSpeaking = useCallback(() => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speakTokenRef = useRef(0);
+  const speakWatchRef = useRef<number | null>(null);
+
+  const haltAudio = useCallback(() => {
+    speakTokenRef.current++;
+    if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
+    speakWatchRef.current = null;
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.src = "";
+    }
+    audioRef.current = null;
     window.speechSynthesis?.cancel();
-    replyRef.current = "";
-    if (modeRef.current === "speaking") setMode(micWantedRef.current ? "listening" : "idle");
   }, []);
 
-  const speak = useCallback((text: string) => {
-    const synth = window.speechSynthesis;
-    if (!synth) return setMode(micWantedRef.current ? "listening" : "idle");
-    synth.cancel();
-    replyRef.current = text.toLowerCase();
-    const u = new SpeechSynthesisUtterance(text);
-    const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
-    u.rate = t.rate;
-    u.pitch = t.pitch;
-    const done = () => {
-      replyRef.current = "";
-      setMode(micWantedRef.current ? "listening" : "idle");
-    };
-    u.onend = done;
-    u.onerror = done;
-    setMode("speaking");
-    synth.speak(u);
-  }, []);
+  const stopSpeaking = useCallback(() => {
+    haltAudio();
+    replyRef.current = "";
+    if (modeRef.current === "speaking") setMode(micWantedRef.current ? "listening" : "idle");
+  }, [haltAudio]);
+
+  const speak = useCallback(
+    async (text: string) => {
+      haltAudio();
+      const token = speakTokenRef.current;
+      replyRef.current = text.toLowerCase();
+      setMode("speaking");
+      const done = () => {
+        if (token !== speakTokenRef.current) return;
+        if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
+        speakWatchRef.current = null;
+        audioRef.current = null;
+        replyRef.current = "";
+        setMode(micWantedRef.current ? "listening" : "idle");
+      };
+      // Watchdog: never stay stuck in "speaking" (browser voices sometimes never fire onend).
+      speakWatchRef.current = window.setTimeout(done, Math.min(45000, 4000 + text.length * 90));
+
+      // 1) Natural high-quality voice
+      try {
+        const r = await fetch("/api/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (token !== speakTokenRef.current) return;
+        if (r.ok) {
+          const url = URL.createObjectURL(await r.blob());
+          if (token !== speakTokenRef.current) return URL.revokeObjectURL(url);
+          const a = new Audio(url);
+          const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
+          a.playbackRate = Math.min(1.25, Math.max(0.85, t.rate));
+          a.onended = () => {
+            URL.revokeObjectURL(url);
+            done();
+          };
+          a.onerror = done;
+          audioRef.current = a;
+          await a.play();
+          return;
+        }
+      } catch {
+        /* fall back */
+      }
+      if (token !== speakTokenRef.current) return;
+      // 2) Fallback: device voice
+      const synth = window.speechSynthesis;
+      if (!synth) return done();
+      const u = new SpeechSynthesisUtterance(text);
+      const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
+      u.rate = t.rate;
+      u.pitch = t.pitch;
+      u.onend = done;
+      u.onerror = done;
+      synth.speak(u);
+    },
+    [haltAudio],
+  );
 
   // ---------- ask ----------
   const ensureConversation = useCallback(async () => {
