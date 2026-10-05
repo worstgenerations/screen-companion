@@ -901,7 +901,7 @@ function Workspace() {
             </select>
           </div>
           <p className="text-xs text-muted-foreground">
-            Frames seen: {stats.captured} · sent to Melo: {stats.sent}
+            Frames seen: {stats.captured} · sent to Melo: {stats.sent}{stats.lastMs ? ` · last reply ${(stats.lastMs / 1000).toFixed(1)}s` : ""}
           </p>
           <button
             onClick={() => {
