@@ -78,8 +78,8 @@ const VOICE_TUNING: Record<string, { rate: number; pitch: number }> = {
 };
 
 const FILLER = /^(uh+|um+|hmm+|mm+|okay|ok|yeah|yep|yes|no|right|cool|alright|ah+|oh+|huh|so|well|thanks|thank you)[.!?, ]*$/i;
-const MEANINGFUL_CHANGE = 6; // mean pixel diff for an automatic "screen changed" check-in
-const AUTO_CHECK_MIN_GAP_MS = 8000;
+const MEANINGFUL_CELLS = 3; // changed grid cells (of 48) that count as a real UI change
+const AUTO_CHECK_MIN_GAP_MS = 3500;
 const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,7 +122,7 @@ function Workspace() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [personality, setPersonality] = useState("classic");
-  const [stats, setStats] = useState({ captured: 0, sent: 0 });
+  const [stats, setStats] = useState({ captured: 0, sent: 0, lastMs: 0 });
 
   const convRef = useRef(convId);
   convRef.current = convId;
@@ -137,6 +137,8 @@ function Workspace() {
   const recRef = useRef<SR>(null);
   const micWantedRef = useRef(false);
   const busyRef = useRef(false);
+  const genRef = useRef(0);
+  const autoInFlightRef = useRef(false);
   const pendingRef = useRef<{ userText?: string; source: "text" | "voice" | "screen" } | null>(null);
   const interimRef = useRef("");
   const replyRef = useRef("");
@@ -154,11 +156,12 @@ function Workspace() {
     const v = videoRef.current;
     if (!v || !v.videoWidth) return undefined;
     const canvas = document.createElement("canvas");
-    const scale = Math.min(1, 1024 / v.videoWidth);
+    // 1280px keeps small button labels readable while staying light to upload
+    const scale = Math.min(1, 1280 / v.videoWidth);
     canvas.width = Math.round(v.videoWidth * scale);
     canvas.height = Math.round(v.videoHeight * scale);
     canvas.getContext("2d")!.drawImage(v, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+    return canvas.toDataURL("image/jpeg", 0.62).split(",")[1];
   }, []);
 
   const stopSharing = useCallback(() => {
@@ -280,18 +283,30 @@ function Workspace() {
   const send = useCallback(
     async (opts: { userText?: string; source: "text" | "voice" | "screen"; auto?: boolean; kind?: "first" | "stuck" }) => {
       if (busyRef.current) {
-        // Never drop what the person says — run it right after the current request.
-        if (!opts.auto) pendingRef.current = opts;
-        return;
+        if (opts.auto) return; // never stack automatic checks
+        if (autoInFlightRef.current) {
+          // Your words beat a background screen check: drop the stale one and answer you now.
+          genRef.current++;
+        } else {
+          pendingRef.current = opts; // keep what you said, run it right after
+          return;
+        }
       }
+      const gen = ++genRef.current;
+      const started = performance.now();
       busyRef.current = true;
+      autoInFlightRef.current = !!opts.auto;
       setError(null);
       haltAudio();
       setMode("thinking");
       const userText = opts.userText?.trim();
       if (userText) setTurns((p) => [...p, { id: crypto.randomUUID(), role: "user", content: userText }]);
+      const slowTimer = window.setTimeout(() => {
+        if (gen === genRef.current) setError("Melo is taking a little longer — using your latest screen.");
+      }, 9000);
       try {
         const id = await ensureConversation();
+        // always the freshest frame, grabbed the instant you ask
         const image = streamRef.current ? grabFrame() : undefined;
         if (opts.auto && !image) return;
         if (image) setStats((s) => ({ ...s, sent: s.sent + 1 }));
@@ -318,6 +333,9 @@ function Workspace() {
           }),
           new Promise<never>((_, rej) => window.setTimeout(() => rej(new Error("Melo took too long — try again.")), 30000)),
         ]);
+        if (gen !== genRef.current) return; // a newer request took over — ignore this stale answer
+        setStats((s) => ({ ...s, lastMs: Math.round(performance.now() - started) }));
+        setError(null);
         if (!res.ok) {
           setError(
             res.reason === "trial_expired"
@@ -339,13 +357,18 @@ function Workspace() {
         } else setMode(micWantedRef.current ? "listening" : "idle");
         void qc.invalidateQueries({ queryKey: ["workspace"] });
       } catch (e) {
+        if (gen !== genRef.current) return;
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMode(micWantedRef.current ? "listening" : "idle");
       } finally {
-        busyRef.current = false;
-        const next = pendingRef.current;
-        pendingRef.current = null;
-        if (next) void sendRef.current(next);
+        window.clearTimeout(slowTimer);
+        if (gen === genRef.current) {
+          busyRef.current = false;
+          autoInFlightRef.current = false;
+          const next = pendingRef.current;
+          pendingRef.current = null;
+          if (next) void sendRef.current(next);
+        }
       }
     },
     [ask, ensureConversation, grabFrame, speak, haltAudio, qc],
@@ -353,21 +376,26 @@ function Workspace() {
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // local screen awareness: thumbnail every 2s; AI on first look, big change, or when stuck
+  // Local screen awareness: tiny thumbnail every 300ms (never sent anywhere).
+  // Region-based diff ignores cursor/clock/spinner noise; a meaningful change is
+  // only analysed once the screen settles, so bursts (click → menu → submenu)
+  // produce ONE request for the newest state.
   useEffect(() => {
     if (!sharing) return;
     let firstDone = false;
     let lastChangeAt = Date.now();
     let stuckNudged = false;
+    let pendingChange = false;
+    const W = 64, H = 36, CW = 8, CH = 6; // 8x6 grid of cells
     const t = window.setInterval(() => {
       const v = videoRef.current;
       if (!v || !v.videoWidth) return;
       const c = document.createElement("canvas");
-      c.width = 64;
-      c.height = 36;
-      const ctx = c.getContext("2d")!;
-      ctx.drawImage(v, 0, 0, 64, 36);
-      const px = ctx.getImageData(0, 0, 64, 36).data;
+      c.width = W;
+      c.height = H;
+      const ctx = c.getContext("2d", { willReadFrequently: true })!;
+      ctx.drawImage(v, 0, 0, W, H);
+      const px = ctx.getImageData(0, 0, W, H).data;
       setStats((s) => ({ ...s, captured: s.captured + 1 }));
       const last = lastThumbRef.current;
       lastThumbRef.current = px;
@@ -381,15 +409,29 @@ function Workspace() {
         return;
       }
       if (!last) return;
-      let diff = 0;
-      for (let i = 0; i < px.length; i += 4) diff += Math.abs(px[i]! - last[i]!);
-      const mean = diff / (px.length / 4);
-      if (mean > 1.5) {
+      const cells = new Float32Array((W / CW) * (H / CH));
+      let total = 0;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          const d = Math.abs(px[i]! - last[i]!) + Math.abs(px[i + 1]! - last[i + 1]!) + Math.abs(px[i + 2]! - last[i + 2]!);
+          total += d;
+          cells[Math.floor(y / CH) * (W / CW) + Math.floor(x / CW)]! += d;
+        }
+      const perCell = CW * CH * 3;
+      let changedCells = 0;
+      for (const v2 of cells) if (v2 / perCell > 10) changedCells++;
+      const mean = total / (W * H * 3);
+      const moving = mean > 1;
+      if (moving) {
         lastChangeAt = now;
         stuckNudged = false;
       }
+      // a cursor or clock touches 1-2 cells; menus, modals, pages touch many
+      if (changedCells >= MEANINGFUL_CELLS) pendingChange = true;
       if (!free) return;
-      if (mean > MEANINGFUL_CHANGE && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS) {
+      if (pendingChange && !moving && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS) {
+        pendingChange = false;
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true });
       } else if (!stuckNudged && now - lastChangeAt > STUCK_AFTER_MS && now - lastAutoRef.current > STUCK_AFTER_MS) {
@@ -397,7 +439,7 @@ function Workspace() {
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true, kind: "stuck" });
       }
-    }, 2000);
+    }, 300);
     return () => window.clearInterval(t);
   }, [sharing]);
 
