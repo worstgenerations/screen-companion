@@ -16,6 +16,7 @@ import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedMeloRouteImport } from './routes/_authenticated/melo'
 import { Route as ApiAskRouteImport } from './routes/api/ask'
+import { Route as ApiMeloStreamRouteImport } from './routes/api/melo-stream'
 import { Route as ApiSpeakRouteImport } from './routes/api/speak'
 
 const IndexRoute = IndexRouteImport.update({
@@ -52,6 +53,11 @@ const ApiAskRoute = ApiAskRouteImport.update({
   path: '/api/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiMeloStreamRoute = ApiMeloStreamRouteImport.update({
+  id: '/api/melo-stream',
+  path: '/api/melo-stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSpeakRoute = ApiSpeakRouteImport.update({
   id: '/api/speak',
   path: '/api/speak',
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/melo': typeof AuthenticatedMeloRoute
   '/api/ask': typeof ApiAskRoute
+  '/api/melo-stream': typeof ApiMeloStreamRoute
   '/api/speak': typeof ApiSpeakRoute
 }
 export interface FileRoutesByTo {
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/melo': typeof AuthenticatedMeloRoute
   '/api/ask': typeof ApiAskRoute
+  '/api/melo-stream': typeof ApiMeloStreamRoute
   '/api/speak': typeof ApiSpeakRoute
 }
 export interface FileRoutesById {
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/melo': typeof AuthenticatedMeloRoute
   '/api/ask': typeof ApiAskRoute
+  '/api/melo-stream': typeof ApiMeloStreamRoute
   '/api/speak': typeof ApiSpeakRoute
 }
 export interface FileRouteTypes {
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/melo'
     | '/api/ask'
+    | '/api/melo-stream'
     | '/api/speak'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/melo'
     | '/api/ask'
+    | '/api/melo-stream'
     | '/api/speak'
   id:
     | '__root__'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/melo'
     | '/api/ask'
+    | '/api/melo-stream'
     | '/api/speak'
   fileRoutesById: FileRoutesById
 }
@@ -123,6 +135,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiAskRoute: typeof ApiAskRoute
+  ApiMeloStreamRoute: typeof ApiMeloStreamRoute
   ApiSpeakRoute: typeof ApiSpeakRoute
 }
 
@@ -177,6 +190,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAskRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/melo-stream': {
+      id: '/api/melo-stream'
+      path: '/api/melo-stream'
+      fullPath: '/api/melo-stream'
+      preLoaderRoute: typeof ApiMeloStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/speak': {
       id: '/api/speak'
       path: '/api/speak'
@@ -207,6 +227,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiAskRoute: ApiAskRoute,
+  ApiMeloStreamRoute: ApiMeloStreamRoute,
   ApiSpeakRoute: ApiSpeakRoute,
 }
 export const routeTree = rootRouteImport
