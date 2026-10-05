@@ -13,7 +13,7 @@ type ProductConfig = {
   trial_days: number;
 };
 
-type LimitsConfig = {
+export type LimitsConfig = {
   trial_daily_interactions: number;
   pro_daily_interactions: number;
   trial_daily_ai_seconds: number;
@@ -28,14 +28,14 @@ const DEFAULT_PRODUCT: ProductConfig = {
   trial_days: 7,
 };
 
-const DEFAULT_LIMITS: LimitsConfig = {
+export const DEFAULT_LIMITS: LimitsConfig = {
   trial_daily_interactions: 60,
   pro_daily_interactions: 500,
   trial_daily_ai_seconds: 1800,
   pro_daily_ai_seconds: 14400,
 };
 
-const SYSTEM = `You are Melo, a friendly spoken voice assistant that guides people step by step through practical tasks: setting up a data pipeline, opening an online store, installing software, fixing a setting, anything.
+export const SYSTEM = `You are Melo, a friendly spoken voice assistant that guides people step by step through practical tasks: setting up a data pipeline, opening an online store, installing software, fixing a setting, anything.
 
 Rules for every reply:
 - You are being SPOKEN ALOUD. Keep it short: 2-4 sentences max.
@@ -55,12 +55,12 @@ const PERSONAS: Record<string, string> = {
   mentor: "Personality: calm, patient mentor who briefly explains why each step matters.",
   savage: "Personality: sarcastic and blunt but still genuinely helpful. Never insulting about the person.",
 };
-function personaLine(p?: string) {
+export function personaLine(p?: string) {
   const line = p ? PERSONAS[p] : "";
   return line ? `\n\n${line}` : "";
 }
 
-function todayUtc() {
+export function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
 
