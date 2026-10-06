@@ -24,7 +24,7 @@ import {
   Pin,
 } from "lucide-react";
 
-import { meloAsk } from "@/lib/melo.functions";
+import { supabase } from "@/integrations/supabase/client";
 import {
   listWorkspace,
   getMessages,
@@ -79,7 +79,12 @@ const VOICE_TUNING: Record<string, { rate: number; pitch: number }> = {
 
 const FILLER = /^(uh+|um+|hmm+|mm+|okay|ok|yeah|yep|yes|no|right|cool|alright|ah+|oh+|huh|so|well|thanks|thank you)[.!?, ]*$/i;
 const MEANINGFUL_CELLS = 3; // changed grid cells (of 48) that count as a real UI change
-const AUTO_CHECK_MIN_GAP_MS = 3500;
+const SPEED_MODES = [
+  { id: "fast", name: "Fast", desc: "checks constantly, short answers", tick: 250, gap: 2500, width: 1024, q: 0.6 },
+  { id: "balanced", name: "Balanced", desc: "normal checks, clear steps", tick: 500, gap: 4000, width: 1280, q: 0.62 },
+  { id: "deep", name: "Deep", desc: "calmer checks, detailed guidance", tick: 1000, gap: 7000, width: 1600, q: 0.7 },
+] as const;
+type SpeedMode = (typeof SPEED_MODES)[number];
 const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,7 +102,6 @@ function Workspace() {
   const delConv = useServerFn(deleteConversation);
   const putProject = useServerFn(saveProject);
   const delProject = useServerFn(deleteProject);
-  const ask = useServerFn(meloAsk);
 
   const ws = useQuery({ queryKey: ["workspace"], queryFn: () => fetchWs() });
   const msgs = useQuery({
@@ -122,7 +126,10 @@ function Workspace() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [personality, setPersonality] = useState("classic");
-  const [stats, setStats] = useState({ captured: 0, sent: 0, lastMs: 0 });
+  const [stats, setStats] = useState({ captured: 0, sent: 0, lastMs: 0, firstMs: 0 });
+  const [speed, setSpeed] = useState<SpeedMode["id"]>("fast");
+  const modeCfgRef = useRef<SpeedMode>(SPEED_MODES[0]);
+  modeCfgRef.current = SPEED_MODES.find((m) => m.id === speed) ?? SPEED_MODES[0];
 
   const convRef = useRef(convId);
   convRef.current = convId;
@@ -149,6 +156,8 @@ function Workspace() {
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem("melo-personality") : null;
     if (saved) setPersonality(saved);
+    const sp = localStorage.getItem("melo-speed");
+    if (sp === "fast" || sp === "balanced" || sp === "deep") setSpeed(sp);
   }, []);
 
   // ---------- screen ----------
@@ -157,11 +166,11 @@ function Workspace() {
     if (!v || !v.videoWidth) return undefined;
     const canvas = document.createElement("canvas");
     // 1280px keeps small button labels readable while staying light to upload
-    const scale = Math.min(1, 1280 / v.videoWidth);
+    const scale = Math.min(1, modeCfgRef.current.width / v.videoWidth);
     canvas.width = Math.round(v.videoWidth * scale);
     canvas.height = Math.round(v.videoHeight * scale);
     canvas.getContext("2d")!.drawImage(v, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.62).split(",")[1];
+    return canvas.toDataURL("image/jpeg", modeCfgRef.current.q).split(",")[1];
   }, []);
 
   const stopSharing = useCallback(() => {
@@ -193,6 +202,11 @@ function Workspace() {
   const speakTokenRef = useRef(0);
   const speakWatchRef = useRef<number | null>(null);
 
+  const queueRef = useRef<{ text: string; audio: Promise<string | null> }[]>([]);
+  const playingRef = useRef(false);
+  const streamDoneRef = useRef(true);
+  const streamAbortRef = useRef<AbortController | null>(null);
+
   const haltAudio = useCallback(() => {
     speakTokenRef.current++;
     if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
@@ -203,6 +217,8 @@ function Workspace() {
       a.src = "";
     }
     audioRef.current = null;
+    queueRef.current = [];
+    playingRef.current = false;
     window.speechSynthesis?.cancel();
   }, []);
 
@@ -212,62 +228,94 @@ function Workspace() {
     if (modeRef.current === "speaking") setMode(micWantedRef.current ? "listening" : "idle");
   }, [haltAudio]);
 
-  const speak = useCallback(
-    async (text: string) => {
-      haltAudio();
-      const token = speakTokenRef.current;
-      replyRef.current = text.toLowerCase();
-      setMode("speaking");
-      const done = () => {
-        if (token !== speakTokenRef.current) return;
-        if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
-        speakWatchRef.current = null;
+  const fetchAudio = useCallback(async (text: string): Promise<string | null> => {
+    try {
+      const r = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      return r.ok ? URL.createObjectURL(await r.blob()) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Plays queued sentences one after another; the next sentence's audio is
+  // already being generated while the current one plays.
+  const playNext = useCallback(async () => {
+    const token = speakTokenRef.current;
+    if (speakWatchRef.current) window.clearTimeout(speakWatchRef.current);
+    const item = queueRef.current.shift();
+    if (!item) {
+      playingRef.current = false;
+      if (streamDoneRef.current) {
         audioRef.current = null;
         replyRef.current = "";
         setMode(micWantedRef.current ? "listening" : "idle");
-      };
-      // Watchdog: never stay stuck in "speaking" (browser voices sometimes never fire onend).
-      speakWatchRef.current = window.setTimeout(done, Math.min(45000, 4000 + text.length * 90));
-
-      // 1) Natural high-quality voice
-      try {
-        const r = await fetch("/api/speak", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (token !== speakTokenRef.current) return;
-        if (r.ok) {
-          const url = URL.createObjectURL(await r.blob());
-          if (token !== speakTokenRef.current) return URL.revokeObjectURL(url);
-          const a = new Audio(url);
-          const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
-          a.playbackRate = Math.min(1.25, Math.max(0.85, t.rate));
-          a.onended = () => {
-            URL.revokeObjectURL(url);
-            done();
-          };
-          a.onerror = done;
-          audioRef.current = a;
-          await a.play();
-          return;
-        }
-      } catch {
-        /* fall back */
       }
-      if (token !== speakTokenRef.current) return;
-      // 2) Fallback: device voice
-      const synth = window.speechSynthesis;
-      if (!synth) return done();
-      const u = new SpeechSynthesisUtterance(text);
-      const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
-      u.rate = t.rate;
-      u.pitch = t.pitch;
-      u.onend = done;
-      u.onerror = done;
-      synth.speak(u);
+      return;
+    }
+    playingRef.current = true;
+    const next = () => {
+      if (token === speakTokenRef.current) void playNextRef.current();
+    };
+    const url = await item.audio;
+    if (token !== speakTokenRef.current) {
+      if (url) URL.revokeObjectURL(url);
+      return;
+    }
+    // Watchdog: never stay stuck if a voice never reports it finished.
+    speakWatchRef.current = window.setTimeout(next, Math.min(30000, 3000 + item.text.length * 90));
+    const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
+    if (url) {
+      const a = new Audio(url);
+      a.playbackRate = Math.min(1.25, Math.max(0.85, t.rate));
+      a.onended = () => {
+        URL.revokeObjectURL(url);
+        next();
+      };
+      a.onerror = next;
+      audioRef.current = a;
+      try {
+        await a.play();
+        return;
+      } catch {
+        /* fall through to device voice */
+      }
+    }
+    const synth = window.speechSynthesis;
+    if (!synth) return next();
+    const u = new SpeechSynthesisUtterance(item.text);
+    u.rate = t.rate;
+    u.pitch = t.pitch;
+    u.onend = next;
+    u.onerror = next;
+    synth.speak(u);
+  }, []);
+  const playNextRef = useRef(playNext);
+  playNextRef.current = playNext;
+
+  const enqueueSpeech = useCallback(
+    (text: string) => {
+      const s = text.trim();
+      if (!s) return;
+      replyRef.current += " " + s.toLowerCase();
+      setMode("speaking");
+      queueRef.current.push({ text: s, audio: fetchAudio(s) });
+      if (!playingRef.current) void playNext();
     },
-    [haltAudio],
+    [fetchAudio, playNext],
+  );
+
+  const speak = useCallback(
+    (text: string) => {
+      haltAudio();
+      replyRef.current = "";
+      streamDoneRef.current = true;
+      enqueueSpeech(text);
+    },
+    [haltAudio, enqueueSpeech],
   );
 
   // ---------- ask ----------
@@ -285,10 +333,11 @@ function Workspace() {
       if (busyRef.current) {
         if (opts.auto) return; // never stack automatic checks
         if (autoInFlightRef.current) {
-          // Your words beat a background screen check: drop the stale one and answer you now.
+          // Your words beat a background screen check: cancel the stale one and answer you now.
           genRef.current++;
+          streamAbortRef.current?.abort();
         } else {
-          pendingRef.current = opts; // keep what you said, run it right after
+          pendingRef.current = opts;
           return;
         }
       }
@@ -298,15 +347,17 @@ function Workspace() {
       autoInFlightRef.current = !!opts.auto;
       setError(null);
       haltAudio();
+      replyRef.current = "";
       setMode("thinking");
       const userText = opts.userText?.trim();
       if (userText) setTurns((p) => [...p, { id: crypto.randomUUID(), role: "user", content: userText }]);
       const slowTimer = window.setTimeout(() => {
         if (gen === genRef.current) setError("Melo is taking a little longer — using your latest screen.");
       }, 9000);
+      const ctrl = new AbortController();
+      streamAbortRef.current = ctrl;
       try {
-        const id = await ensureConversation();
-        // always the freshest frame, grabbed the instant you ask
+        const [id, sess] = await Promise.all([ensureConversation(), supabase.auth.getSession()]);
         const image = streamRef.current ? grabFrame() : undefined;
         if (opts.auto && !image) return;
         if (image) setStats((s) => ({ ...s, sent: s.sent + 1 }));
@@ -318,46 +369,99 @@ function Workspace() {
               : "My screen just changed. If I'm on track give the next single step; if I clicked something wrong say so; if nothing needs a reaction reply exactly SKIP."
           : image
             ? `Here is my screen right now. I said: "${userText}". Answer directly using what you see — never reply SKIP.`
-            : userText;
-        const res = await Promise.race([
-          ask({
-            data: {
-              text: prompt,
-              ...(image ? { image } : {}),
-              conversationId: id,
-              source: opts.source,
-              userText: opts.auto ? "(screen check)" : userText,
-              personality: personaRef.current,
-              history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
-            },
+            : (userText ?? "");
+        const res = await fetch("/api/melo-stream", {
+          method: "POST",
+          signal: ctrl.signal,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sess.data.session?.access_token ?? ""}`,
+          },
+          body: JSON.stringify({
+            text: prompt,
+            ...(image ? { image } : {}),
+            conversationId: id,
+            source: opts.source,
+            userText: opts.auto ? "(screen check)" : userText,
+            personality: personaRef.current,
+            detail: modeCfgRef.current.id,
+            history: turnsRef.current.slice(-10).map(({ role, content }) => ({ role, content: content.slice(0, 4000) })),
           }),
-          new Promise<never>((_, rej) => window.setTimeout(() => rej(new Error("Melo took too long — try again.")), 30000)),
-        ]);
-        if (gen !== genRef.current) return; // a newer request took over — ignore this stale answer
-        setStats((s) => ({ ...s, lastMs: Math.round(performance.now() - started) }));
-        setError(null);
-        if (!res.ok) {
+        });
+        if (gen !== genRef.current) return;
+        if (!res.ok || !res.body) {
+          const j = (await res.json().catch(() => ({}))) as { reason?: string };
           setError(
-            res.reason === "trial_expired"
+            j.reason === "trial_expired"
               ? "Your free trial has ended."
-              : res.reason === "limit_reached"
+              : j.reason === "limit_reached"
                 ? "You've hit today's usage limit. It resets at midnight UTC."
-                : res.reason === "rate_limited"
+                : j.reason === "rate_limited"
                   ? "Too many requests — give it a few seconds."
-                  : "Couldn't reach Melo. Try again.",
+                  : j.reason === "credits"
+                    ? "The AI credits for this app have run out."
+                    : "Couldn't reach Melo. Try again.",
           );
           setMode(micWantedRef.current ? "listening" : "idle");
           return;
         }
-        const reply = res.reply.trim();
-        const silent = reply.toUpperCase().startsWith("SKIP");
-        if (!silent) {
-          setTurns((p) => [...p, { id: crypto.randomUUID(), role: "assistant", content: reply }]);
-          speak(reply);
-        } else setMode(micWantedRef.current ? "listening" : "idle");
+        // Stream: show text as it arrives and speak each sentence as soon as it's complete.
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let full = "";
+        let spoken = 0;
+        let turnId: string | null = null;
+        let decided = false;
+        let silent = false;
+        streamDoneRef.current = false;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (gen !== genRef.current) {
+            ctrl.abort();
+            return;
+          }
+          if (value) full += dec.decode(value, { stream: true });
+          if (!decided && (full.trim().length >= 4 || done)) {
+            decided = true;
+            silent = full.trim().toUpperCase().startsWith("SKIP") || !full.trim();
+            if (!silent) setStats((s) => ({ ...s, firstMs: Math.round(performance.now() - started) }));
+          }
+          if (decided && !silent) {
+            if (!turnId) {
+              const nid = crypto.randomUUID();
+              turnId = nid;
+              setTurns((p) => [...p, { id: nid, role: "assistant", content: full }]);
+            } else {
+              const tid = turnId;
+              setTurns((p) => p.map((t) => (t.id === tid ? { ...t, content: full } : t)));
+            }
+            // speak every finished sentence (ends with . ! ? followed by space)
+            const rest = full.slice(spoken);
+            const re = /[^.!?]+[.!?]+["')\]]*\s+/g;
+            let m: RegExpExecArray | null;
+            let consumed = 0;
+            while ((m = re.exec(rest))) consumed = m.index + m[0].length;
+            if (consumed > 0) {
+              enqueueSpeech(rest.slice(0, consumed));
+              spoken += consumed;
+            }
+          }
+          if (done) break;
+        }
+        streamDoneRef.current = true;
+        setStats((s) => ({ ...s, lastMs: Math.round(performance.now() - started) }));
+        setError(null);
+        if (silent) {
+          setMode(micWantedRef.current ? "listening" : "idle");
+        } else {
+          const tail = full.slice(spoken);
+          if (tail.trim()) enqueueSpeech(tail);
+          else if (!playingRef.current) void playNext();
+        }
         void qc.invalidateQueries({ queryKey: ["workspace"] });
       } catch (e) {
-        if (gen !== genRef.current) return;
+        if (gen !== genRef.current || ctrl.signal.aborted) return;
+        streamDoneRef.current = true;
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMode(micWantedRef.current ? "listening" : "idle");
       } finally {
@@ -371,7 +475,7 @@ function Workspace() {
         }
       }
     },
-    [ask, ensureConversation, grabFrame, speak, haltAudio, qc],
+    [ensureConversation, grabFrame, haltAudio, enqueueSpeech, playNext, qc],
   );
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -430,7 +534,7 @@ function Workspace() {
       // a cursor or clock touches 1-2 cells; menus, modals, pages touch many
       if (changedCells >= MEANINGFUL_CELLS) pendingChange = true;
       if (!free) return;
-      if (pendingChange && !moving && now - lastAutoRef.current > AUTO_CHECK_MIN_GAP_MS) {
+      if (pendingChange && !moving && now - lastAutoRef.current > modeCfgRef.current.gap) {
         pendingChange = false;
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true });
@@ -439,9 +543,9 @@ function Workspace() {
         lastAutoRef.current = now;
         void sendRef.current({ source: "screen", auto: true, kind: "stuck" });
       }
-    }, 300);
+    }, modeCfgRef.current.tick);
     return () => window.clearInterval(t);
-  }, [sharing]);
+  }, [sharing, speed]);
 
   // ---------- hands-free mic ----------
   const stopMic = useCallback(() => {
@@ -900,8 +1004,30 @@ function Workspace() {
               ))}
             </select>
           </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Speed</label>
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-border p-1">
+              {SPEED_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  title={m.desc}
+                  onClick={() => {
+                    setSpeed(m.id);
+                    localStorage.setItem("melo-speed", m.id);
+                  }}
+                  className={cn(
+                    "rounded-md px-2 py-1 text-xs transition-colors",
+                    speed === m.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{modeCfgRef.current.desc}</p>
+          </div>
           <p className="text-xs text-muted-foreground">
-            Frames seen: {stats.captured} · sent to Melo: {stats.sent}{stats.lastMs ? ` · last reply ${(stats.lastMs / 1000).toFixed(1)}s` : ""}
+            Frames seen: {stats.captured} · sent to Melo: {stats.sent}{stats.firstMs ? ` · started talking in ${(stats.firstMs / 1000).toFixed(1)}s` : ""}
           </p>
           <button
             onClick={() => {
