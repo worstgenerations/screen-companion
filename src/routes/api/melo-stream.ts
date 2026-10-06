@@ -45,15 +45,15 @@ export const Route = createFileRoute("/api/melo-stream")({
         if (!parsed.success) return fail("bad_request", 400);
         const data = parsed.data;
 
-        const { data: entitled } = await supabaseAdmin.rpc("melo_entitled", { _user_id: userId });
-        if (!entitled) return fail("trial_expired", 402);
-
         const day = todayUtc();
-        const [cfgRes, subRes, todayRes] = await Promise.all([
+        // all access checks run at once to save time
+        const [{ data: entitled }, cfgRes, subRes, todayRes] = await Promise.all([
+          supabaseAdmin.rpc("melo_entitled", { _user_id: userId }),
           supabaseAdmin.from("app_config").select("key, value").eq("key", "limits"),
           supabaseAdmin.from("subscriptions").select("subscription_status, trial_ends_at").eq("user_id", userId).maybeSingle(),
           supabaseAdmin.from("usage_daily").select("id, interactions, input_tokens, output_tokens").eq("user_id", userId).eq("day", day).maybeSingle(),
         ]);
+        if (!entitled) return fail("trial_expired", 402);
         const limits = { ...DEFAULT_LIMITS, ...((cfgRes.data?.[0]?.value as object) ?? {}) } as LimitsConfig;
         const sub = subRes.data;
         const onTrial =
