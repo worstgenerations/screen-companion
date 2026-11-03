@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { DEFAULT_LIMITS, SYSTEM, personaLine, todayUtc, type LimitsConfig } from "@/lib/melo.functions";
+import { SYSTEM, personaLine, todayUtc } from "@/lib/melo.functions";
 
 const MODEL = "google/gemini-3.8-flash";
 
@@ -25,13 +25,21 @@ const DETAIL: Record<string, string> = {
   deep: "\n\nResponse mode DEEP: you may use up to 6 sentences. Give the next step, briefly why it matters, and what they should expect to see after.",
 };
 
+// The Chrome extension (and any same-site page) may call this API directly.
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+
 function fail(reason: string, status: number) {
-  return Response.json({ ok: false, reason }, { status });
+  return Response.json({ ok: false, reason }, { status, headers: CORS });
 }
 
 export const Route = createFileRoute("/api/melo-stream")({
   server: {
     handlers: {
+      OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
       POST: async ({ request }) => {
         // Verify the caller from their own session token; never trust the client.
         const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -46,20 +54,14 @@ export const Route = createFileRoute("/api/melo-stream")({
         const data = parsed.data;
 
         const day = todayUtc();
-        // all access checks run at once to save time
-        const [{ data: entitled }, cfgRes, subRes, todayRes] = await Promise.all([
-          supabaseAdmin.rpc("melo_entitled", { _user_id: userId }),
-          supabaseAdmin.from("app_config").select("key, value").eq("key", "limits"),
-          supabaseAdmin.from("subscriptions").select("subscription_status, trial_ends_at").eq("user_id", userId).maybeSingle(),
-          supabaseAdmin.from("usage_daily").select("id, interactions, input_tokens, output_tokens").eq("user_id", userId).eq("day", day).maybeSingle(),
-        ]);
-        if (!entitled) return fail("trial_expired", 402);
-        const limits = { ...DEFAULT_LIMITS, ...((cfgRes.data?.[0]?.value as object) ?? {}) } as LimitsConfig;
-        const sub = subRes.data;
-        const onTrial =
-          sub?.subscription_status === "TRIALING" && !!sub.trial_ends_at && new Date(sub.trial_ends_at).getTime() > Date.now();
-        const dailyLimit = onTrial ? limits.trial_daily_interactions : limits.pro_daily_interactions;
-        if ((todayRes.data?.interactions ?? 0) >= dailyLimit) return fail("limit_reached", 429);
+        // Free for everyone right now: no subscription or daily-cap gate.
+        // Usage is still recorded server-side (basic monitoring stays).
+        const todayRes = await supabaseAdmin
+          .from("usage_daily")
+          .select("id, interactions, input_tokens, output_tokens")
+          .eq("user_id", userId)
+          .eq("day", day)
+          .maybeSingle();
 
         const apiKey = process.env["LOVABLE_API_KEY"];
         if (!apiKey) return fail("not_configured", 500);
@@ -183,7 +185,7 @@ export const Route = createFileRoute("/api/melo-stream")({
         );
 
         return new Response(out, {
-          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", ...CORS },
         });
       },
     },
