@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { MonitorPlay, ShieldCheck, LogOut, Loader2, Clock, Zap } from "lucide-react";
+import { MonitorPlay, ShieldCheck, LogOut, Loader2, Zap } from "lucide-react";
 
 import { getAccountState } from "@/lib/melo.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,26 +9,11 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
     meta: [
       { title: "Dashboard — Melo AI" },
-      { name: "description", content: "Your Melo AI account, trial status and daily usage." },
+      { name: "description", content: "Your Melo AI account and today's activity." },
     ],
   }),
   component: Dashboard,
 });
-
-function statusLabel(status: string) {
-  switch (status) {
-    case "TRIALING":
-      return "Free trial";
-    case "ACTIVE":
-      return "Pro";
-    case "EXPIRED":
-      return "Trial ended";
-    case "CANCELLED":
-      return "Cancelled";
-    default:
-      return status;
-  }
-}
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -57,10 +42,6 @@ function Dashboard() {
       </main>
     );
   }
-
-  const usagePct = Math.min(100, (data.usageToday.interactions / data.usageToday.dailyLimit) * 100);
-  const trialPct =
-    data.status === "TRIALING" ? Math.max(0, (data.trialDaysLeft / data.trialDays) * 100) : 0;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-background text-foreground">
@@ -103,72 +84,37 @@ function Dashboard() {
 
         <section className="mt-8 grid gap-4 sm:grid-cols-2">
           <div className="rounded-2xl border border-border bg-card/80 p-5 backdrop-blur">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Plan</p>
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                  data.entitled
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : "bg-destructive/15 text-destructive"
-                }`}
-              >
-                {statusLabel(data.status)}
-              </span>
-            </div>
-            <p className="mt-3 font-display text-2xl">
-              ${(data.priceCents / 100).toFixed(0)}
-              <span className="text-sm text-muted-foreground">/month</span>
+            <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <MonitorPlay className="size-3.5" /> Plan
             </p>
-            {data.status === "TRIALING" && (
-              <div className="mt-3">
-                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Clock className="size-3.5" />
-                  {data.trialDaysLeft} day{data.trialDaysLeft === 1 ? "" : "s"} left in your trial
-                </p>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${trialPct}%` }} />
-                </div>
-              </div>
-            )}
-            {data.status === "EXPIRED" && (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Your trial has ended. Billing opens soon — you'll be able to continue with Pro.
-              </p>
-            )}
+            <p className="mt-3 font-display text-2xl">Free</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Full access while Melo is in beta — no payment needed.
+            </p>
           </div>
 
           <div className="rounded-2xl border border-border bg-card/80 p-5 backdrop-blur">
             <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <Zap className="size-3.5" /> Usage today
+              <Zap className="size-3.5" /> Today
             </p>
             <p className="mt-3 font-display text-2xl">
               {data.usageToday.interactions}
-              <span className="text-sm text-muted-foreground"> / {data.usageToday.dailyLimit} interactions</span>
+              <span className="text-sm text-muted-foreground"> interactions</span>
             </p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${usagePct}%` }} />
-            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Every question, voice turn and screen check counts.</p>
           </div>
         </section>
 
         <section className="mt-8 rounded-2xl border border-border bg-card/80 p-6 text-center backdrop-blur">
-          {data.entitled ? (
-            <>
-              <p className="text-sm text-muted-foreground">
-                Ready when you are. Melo will watch your screen and talk you through your task.
-              </p>
-              <Link
-                to="/melo"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              >
-                <MonitorPlay className="size-4" /> Start Melo
-              </Link>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Your trial has ended. Paid plans open soon — check back shortly.
-            </p>
-          )}
+          <p className="text-sm text-muted-foreground">
+            Ready when you are. Melo will watch your screen and talk you through your task.
+          </p>
+          <Link
+            to="/melo"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            <MonitorPlay className="size-4" /> Start Melo
+          </Link>
         </section>
       </div>
     </main>
