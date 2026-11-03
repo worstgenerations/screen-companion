@@ -47,7 +47,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/melo")({
-  validateSearch: z.object({ c: z.string().uuid().optional() }),
+  validateSearch: z.object({ c: z.string().uuid().optional(), debug: z.boolean().optional() }),
   head: () => ({
     meta: [
       { title: "Melo — Workspace" },
@@ -91,7 +91,7 @@ const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
 type SR = any;
 
 function Workspace() {
-  const { c: convId } = Route.useSearch();
+  const { c: convId, debug } = Route.useSearch();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -128,6 +128,9 @@ function Workspace() {
   const [personality, setPersonality] = useState("classic");
   const [stats, setStats] = useState({ captured: 0, sent: 0, lastMs: 0, firstMs: 0 });
   const [speed, setSpeed] = useState<SpeedMode["id"]>("fast");
+  // Internal diagnostics (only rendered with ?debug=1). Never shown to normal users.
+  const metricsRef = useRef({ ttft: 0, total: 0, captureMs: 0, ttsMs: 0, sttFirstMs: 0, failed: 0, cancelled: 0 });
+  const [, setMetricsTick] = useState(0);
   const modeCfgRef = useRef<SpeedMode>(SPEED_MODES[0]);
   modeCfgRef.current = SPEED_MODES.find((m) => m.id === speed) ?? SPEED_MODES[0];
 
@@ -229,13 +232,17 @@ function Workspace() {
   }, [haltAudio]);
 
   const fetchAudio = useCallback(async (text: string): Promise<string | null> => {
+    const t0 = performance.now();
     try {
       const r = await fetch("/api/speak", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      return r.ok ? URL.createObjectURL(await r.blob()) : null;
+      if (!r.ok) return null;
+      const url = URL.createObjectURL(await r.blob());
+      metricsRef.current.ttsMs = Math.round(performance.now() - t0);
+      return url;
     } catch {
       return null;
     }
@@ -358,9 +365,12 @@ function Workspace() {
       streamAbortRef.current = ctrl;
       try {
         const [id, sess] = await Promise.all([ensureConversation(), supabase.auth.getSession()]);
+        const tCap0 = performance.now();
         const image = streamRef.current ? grabFrame() : undefined;
-        if (opts.auto && !image) return;
-        if (image) setStats((s) => ({ ...s, sent: s.sent + 1 }));
+        if (image) {
+          metricsRef.current.captureMs = Math.round(performance.now() - tCap0);
+          setStats((s) => ({ ...s, sent: s.sent + 1 }));
+        }
         const prompt = opts.auto
           ? opts.kind === "first"
             ? "I just started sharing my screen. Briefly say what you see and ask what I want to do, or if my goal is already clear, give the first step. Never reply SKIP."
@@ -390,17 +400,14 @@ function Workspace() {
         });
         if (gen !== genRef.current) return;
         if (!res.ok || !res.body) {
+          metricsRef.current.failed++;
           const j = (await res.json().catch(() => ({}))) as { reason?: string };
           setError(
-            j.reason === "trial_expired"
-              ? "Your free trial has ended."
-              : j.reason === "limit_reached"
-                ? "You've hit today's usage limit. It resets at midnight UTC."
-                : j.reason === "rate_limited"
-                  ? "Too many requests — give it a few seconds."
-                  : j.reason === "credits"
-                    ? "The AI credits for this app have run out."
-                    : "Couldn't reach Melo. Try again.",
+            j.reason === "rate_limited"
+              ? "Too many requests — give it a few seconds."
+              : j.reason === "credits"
+                ? "The AI credits for this app have run out."
+                : "Couldn't reach Melo. Try again.",
           );
           setMode(micWantedRef.current ? "listening" : "idle");
           return;

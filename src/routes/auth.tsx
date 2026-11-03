@@ -9,9 +9,9 @@ export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
       { title: "Sign in — Melo AI" },
-      { name: "description", content: "Sign in or create your Melo AI account to start your 7-day free trial." },
+      { name: "description", content: "Sign in or create your free Melo AI account." },
       { property: "og:title", content: "Sign in — Melo AI" },
-      { property: "og:description", content: "Sign in or create your Melo AI account to start your 7-day free trial." },
+      { property: "og:description", content: "Sign in or create your free Melo AI account." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -85,8 +85,8 @@ function AuthPage() {
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {mode === "signup"
-              ? "Your AI assistant that sees what you see."
-              : "Sign in to continue to your dashboard."}
+              ? "Your AI assistant that sees what you see. Free while in beta."
+              : "Sign in to continue to your workspace."}
           </p>
         </div>
 
@@ -160,7 +160,7 @@ function AuthPage() {
             }}
             className="w-full pt-1 text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
           >
-            {mode === "signup" ? "Already have an account? Sign in" : "New here? Start your free trial"}
+            {mode === "signup" ? "Already have an account? Sign in" : "New here? Create your free account"}
           </button>
         </form>
       </div>

@@ -45,7 +45,14 @@ Rules for every reply:
 - When you are shown a screenshot of the person's screen, ALWAYS say something useful about what you actually see. Name the exact button, tab or field by its visible label and where it sits on screen (top right, left sidebar, etc).
 - If their mouse is hovering or they just clicked something that does NOT move them toward the goal, say so immediately and plainly: "That's the wrong one — click X instead." Warning them about a wrong click is your highest priority.
 - If they are on track, confirm briefly and give the next single step.
-- Only reply with exactly SKIP when the screen is literally the same as the last one you described and you already told them the step. Never SKIP on the first screenshot.`;
+- Only reply with exactly SKIP when the screen is literally the same as the last one you described and you already told them the step. Never SKIP on the first screenshot.
+
+Guide mode rules:
+- Guide ONE step at a time, then stop and wait for them to do it. Never dump multiple steps or instructions at once.
+- If they say "wait", "hold on" or "one second", acknowledge briefly ("Sure, take your time.") and stay quiet until they speak again.
+- If they say "continue", or the screen shows the previous step worked, confirm it briefly and give the next single step.
+- If they change direction mid-task, adapt immediately to the new goal without complaining.
+- If they ask something unrelated, answer it naturally and briefly — never end the screen session over it.`;
 
 const PERSONAS: Record<string, string> = {
   classic: "",
@@ -159,43 +166,16 @@ export const meloAsk = createServerFn({ method: "POST" })
     const { userId } = context;
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    // 1. Server-side entitlement: trial active or paid plan.
-    const { data: entitled } = await supabaseAdmin.rpc("melo_entitled", { _user_id: userId });
-    if (!entitled) {
-      return { ok: false as const, reason: "trial_expired" as const };
-    }
-
-    // 2. Config + today's usage -> enforce the daily interaction cap server-side.
+    // Free for now: no paywall or daily cap. Usage is still recorded.
     const day = todayUtc();
-    const [cfgRes, subRes, todayRes] = await Promise.all([
-      supabaseAdmin.from("app_config").select("key, value").in("key", ["product", "limits"]),
-      supabaseAdmin
-        .from("subscriptions")
-        .select("subscription_status, trial_ends_at")
-        .eq("user_id", userId)
-        .maybeSingle(),
-      supabaseAdmin
-        .from("usage_daily")
-        .select("id, interactions, ai_seconds, input_tokens, output_tokens")
-        .eq("user_id", userId)
-        .eq("day", day)
-        .maybeSingle(),
-    ]);
-
-    const cfg = Object.fromEntries((cfgRes.data ?? []).map((r) => [r.key, r.value]));
-    const limits = { ...DEFAULT_LIMITS, ...((cfg["limits"] as object) ?? {}) } as LimitsConfig;
-
-    const sub = subRes.data;
-    const onTrial =
-      sub?.subscription_status === "TRIALING" &&
-      sub.trial_ends_at !== null &&
-      new Date(sub.trial_ends_at).getTime() > Date.now();
-    const dailyLimit = onTrial ? limits.trial_daily_interactions : limits.pro_daily_interactions;
+    const todayRes = await supabaseAdmin
+      .from("usage_daily")
+      .select("id, interactions, ai_seconds, input_tokens, output_tokens")
+      .eq("user_id", userId)
+      .eq("day", day)
+      .maybeSingle();
 
     const usedToday = todayRes.data?.interactions ?? 0;
-    if (usedToday >= dailyLimit) {
-      return { ok: false as const, reason: "limit_reached" as const, limit: dailyLimit };
-    }
 
     // 3. Call the AI.
     const apiKey = process.env["LOVABLE_API_KEY"];
@@ -330,7 +310,7 @@ export const meloAsk = createServerFn({ method: "POST" })
       ok: true as const,
       heard,
       reply,
-      usage: { interactionsToday: usedToday + 1, dailyLimit },
+      usage: { interactionsToday: usedToday + 1 },
     };
   });
 

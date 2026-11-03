@@ -8,13 +8,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Melo AI watches your screen, hears your voice, and speaks live step-by-step guidance for anything you're trying to do. Start your 7-day free trial.",
+          "Melo AI watches your screen, hears your voice, and speaks live step-by-step guidance for anything you're trying to do. Free while in beta.",
       },
       { property: "og:title", content: "Melo AI — Sees Your Screen, Talks You Through It" },
       {
         property: "og:description",
         content:
-          "Melo AI watches your screen, hears your voice, and speaks live step-by-step guidance for anything you're trying to do. Start your 7-day free trial.",
+          "Melo AI watches your screen, hears your voice, and speaks live step-by-step guidance for anything you're trying to do. Free while in beta.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -71,9 +71,9 @@ function Landing() {
               to="/auth"
               className="inline-flex items-center gap-2 rounded-xl bg-primary px-7 py-3.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Start your 7-day free trial <ArrowRight className="size-4" />
+              Start free <ArrowRight className="size-4" />
             </Link>
-            <p className="text-xs text-muted-foreground">Then $9/month. Cancel anytime.</p>
+            <p className="text-xs text-muted-foreground">No payment needed while Melo is in beta.</p>
           </div>
         </section>
 
@@ -98,13 +98,11 @@ function Landing() {
         <section className="pb-24">
           <div className="rounded-3xl border border-border bg-card/80 p-8 text-center backdrop-blur sm:p-12">
             <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-              Simple pricing
+              Free while in beta
             </p>
-            <p className="mt-4 font-display text-5xl tracking-tight">
-              $9<span className="text-lg text-muted-foreground">/month</span>
-            </p>
+            <p className="mt-4 font-display text-5xl tracking-tight">$0</p>
             <p className="mt-3 text-sm text-muted-foreground">
-              7 days free. Full access during your trial. Cancel anytime.
+              Everything included: screen understanding, live voice, step-by-step guidance and your full chat history.
             </p>
             <Link
               to="/auth"
