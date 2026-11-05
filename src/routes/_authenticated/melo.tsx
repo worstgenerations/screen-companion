@@ -151,6 +151,7 @@ function Workspace() {
   const autoInFlightRef = useRef(false);
   const pendingRef = useRef<{ userText?: string; source: "text" | "voice" | "screen" } | null>(null);
   const interimRef = useRef("");
+  const micStartedAtRef = useRef(0);
   const replyRef = useRef("");
   const lastThumbRef = useRef<Uint8ClampedArray | null>(null);
   const lastAutoRef = useRef(0);
@@ -367,6 +368,7 @@ function Workspace() {
         const [id, sess] = await Promise.all([ensureConversation(), supabase.auth.getSession()]);
         const tCap0 = performance.now();
         const image = streamRef.current ? grabFrame() : undefined;
+        if (opts.auto && !image) return;
         if (image) {
           metricsRef.current.captureMs = Math.round(performance.now() - tCap0);
           setStats((s) => ({ ...s, sent: s.sent + 1 }));
@@ -431,7 +433,10 @@ function Workspace() {
           if (!decided && (full.trim().length >= 4 || done)) {
             decided = true;
             silent = full.trim().toUpperCase().startsWith("SKIP") || !full.trim();
-            if (!silent) setStats((s) => ({ ...s, firstMs: Math.round(performance.now() - started) }));
+            if (!silent) {
+              setStats((s) => ({ ...s, firstMs: Math.round(performance.now() - started) }));
+              metricsRef.current.ttft = Math.round(performance.now() - started);
+            }
           }
           if (decided && !silent) {
             if (!turnId) {
@@ -457,6 +462,7 @@ function Workspace() {
         }
         streamDoneRef.current = true;
         setStats((s) => ({ ...s, lastMs: Math.round(performance.now() - started) }));
+        metricsRef.current.total = Math.round(performance.now() - started);
         setError(null);
         if (silent) {
           setMode(micWantedRef.current ? "listening" : "idle");
@@ -467,7 +473,11 @@ function Workspace() {
         }
         void qc.invalidateQueries({ queryKey: ["workspace"] });
       } catch (e) {
-        if (gen !== genRef.current || ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted) {
+          metricsRef.current.cancelled++;
+          return;
+        }
+        if (gen !== genRef.current) return;
         streamDoneRef.current = true;
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMode(micWantedRef.current ? "listening" : "idle");
@@ -594,6 +604,7 @@ function Workspace() {
           if (!text || FILLER.test(text)) continue;
           // ignore Melo hearing itself
           if (replyRef.current && replyRef.current.includes(text.toLowerCase())) continue;
+          if (!metricsRef.current.sttFirstMs) metricsRef.current.sttFirstMs = Date.now() - micStartedAtRef.current;
           haltAudio();
           replyRef.current = "";
           void sendRef.current({ userText: text, source: "voice" });
@@ -629,6 +640,7 @@ function Workspace() {
     micWantedRef.current = true;
     rec.start();
     setMicOn(true);
+    micStartedAtRef.current = Date.now();
     if (modeRef.current === "idle") setMode("listening");
   }, [stopMic, haltAudio]);
 
@@ -648,6 +660,13 @@ function Workspace() {
     textareaRef.current?.focus();
   }, [convId]);
 
+  // keep the diagnostics panel live while it's open
+  useEffect(() => {
+    if (!debug) return;
+    const t = window.setInterval(() => setMetricsTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [debug]);
+
   const submitText = () => {
     const t = input.trim();
     if (!t) return;
@@ -655,6 +674,16 @@ function Workspace() {
     void send({ userText: t, source: "text" });
     textareaRef.current?.focus();
   };
+
+  // Quick action: make sure the screen is connected (so Melo can see), then ask.
+  const quickAsk = (prompt?: string) => {
+    void (async () => {
+      setError(null);
+      if (!sharing) await startSharing();
+      if (prompt) void send({ userText: prompt, source: "text" });
+    })();
+  };
+  const lastConv = (ws.data?.conversations ?? [])[0];
 
   // ---------- sidebar data ----------
   const projects = (ws.data?.projects ?? []).filter((p) => !p.archived);
@@ -854,7 +883,7 @@ function Workspace() {
 
         <div className="border-t border-border p-3">
           <Link to="/dashboard" className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">
-            <Settings className="size-4" /> Settings & plan
+            <Settings className="size-4" /> Settings
           </Link>
         </div>
       </aside>
@@ -883,7 +912,7 @@ function Workspace() {
               </span>
               <h1 className="mt-6 font-display text-4xl tracking-tight">Melo</h1>
               <p className="mt-2 text-muted-foreground">Your AI assistant that sees what you see.</p>
-              <div className="mt-8 flex flex-wrap justify-center gap-2">
+              <div className="mt-8 flex max-w-md flex-wrap justify-center gap-2">
                 <button
                   onClick={async () => {
                     if (!sharing) await startSharing();
@@ -897,8 +926,25 @@ function Workspace() {
                   <Mic className="size-4" /> Talk to Melo
                 </button>
                 <button onClick={() => textareaRef.current?.focus()} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
-                  Start a chat
+                  Ask Melo
                 </button>
+                <button onClick={() => quickAsk("Look at my screen and explain what's on it in simple terms.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Explain this page
+                </button>
+                <button onClick={() => quickAsk("Something on my screen isn't working the way I want. Look at it and tell me the single next thing to fix, one step at a time.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Help me fix something
+                </button>
+                <button onClick={() => quickAsk("Teach me how to do what's on my screen, one step at a time.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Teach me
+                </button>
+                {lastConv && (
+                  <button
+                    onClick={() => void navigate({ to: "/melo", search: { c: lastConv.id } })}
+                    className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent"
+                  >
+                    Continue previous task
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -1046,6 +1092,29 @@ function Workspace() {
           >
             Stop session
           </button>
+        </aside>
+      )}
+
+      {/* INTERNAL DIAGNOSTICS — only with /melo?debug=1, never shown to normal users */}
+      {debug && (
+        <aside
+          className="fixed bottom-28 left-4 z-40 w-60 rounded-xl border border-border bg-card/95 p-3 text-xs backdrop-blur"
+          aria-label="Diagnostics"
+        >
+          <p className="mb-2 font-medium text-muted-foreground">Diagnostics</p>
+          <ul className="space-y-1 text-muted-foreground">
+            <li>First text: {metricsRef.current.ttft} ms</li>
+            <li>Full reply: {metricsRef.current.total} ms</li>
+            <li>Frame capture: {metricsRef.current.captureMs} ms</li>
+            <li>Voice fetch: {metricsRef.current.ttsMs} ms</li>
+            <li>Speech → text: {metricsRef.current.sttFirstMs} ms</li>
+            <li>
+              Failed: {metricsRef.current.failed} · cancelled: {metricsRef.current.cancelled}
+            </li>
+            <li>
+              Frames: {stats.captured} · sent: {stats.sent}
+            </li>
+          </ul>
         </aside>
       )}
     </div>
