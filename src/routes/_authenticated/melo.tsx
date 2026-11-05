@@ -151,6 +151,7 @@ function Workspace() {
   const autoInFlightRef = useRef(false);
   const pendingRef = useRef<{ userText?: string; source: "text" | "voice" | "screen" } | null>(null);
   const interimRef = useRef("");
+  const micStartedAtRef = useRef(0);
   const replyRef = useRef("");
   const lastThumbRef = useRef<Uint8ClampedArray | null>(null);
   const lastAutoRef = useRef(0);
@@ -367,6 +368,7 @@ function Workspace() {
         const [id, sess] = await Promise.all([ensureConversation(), supabase.auth.getSession()]);
         const tCap0 = performance.now();
         const image = streamRef.current ? grabFrame() : undefined;
+        if (opts.auto && !image) return;
         if (image) {
           metricsRef.current.captureMs = Math.round(performance.now() - tCap0);
           setStats((s) => ({ ...s, sent: s.sent + 1 }));
@@ -431,7 +433,10 @@ function Workspace() {
           if (!decided && (full.trim().length >= 4 || done)) {
             decided = true;
             silent = full.trim().toUpperCase().startsWith("SKIP") || !full.trim();
-            if (!silent) setStats((s) => ({ ...s, firstMs: Math.round(performance.now() - started) }));
+            if (!silent) {
+              setStats((s) => ({ ...s, firstMs: Math.round(performance.now() - started) }));
+              metricsRef.current.ttft = Math.round(performance.now() - started);
+            }
           }
           if (decided && !silent) {
             if (!turnId) {
@@ -457,6 +462,7 @@ function Workspace() {
         }
         streamDoneRef.current = true;
         setStats((s) => ({ ...s, lastMs: Math.round(performance.now() - started) }));
+        metricsRef.current.total = Math.round(performance.now() - started);
         setError(null);
         if (silent) {
           setMode(micWantedRef.current ? "listening" : "idle");
@@ -467,7 +473,11 @@ function Workspace() {
         }
         void qc.invalidateQueries({ queryKey: ["workspace"] });
       } catch (e) {
-        if (gen !== genRef.current || ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted) {
+          metricsRef.current.cancelled++;
+          return;
+        }
+        if (gen !== genRef.current) return;
         streamDoneRef.current = true;
         setError(e instanceof Error ? e.message : "Something went wrong.");
         setMode(micWantedRef.current ? "listening" : "idle");
@@ -594,6 +604,7 @@ function Workspace() {
           if (!text || FILLER.test(text)) continue;
           // ignore Melo hearing itself
           if (replyRef.current && replyRef.current.includes(text.toLowerCase())) continue;
+          if (!metricsRef.current.sttFirstMs) metricsRef.current.sttFirstMs = Date.now() - micStartedAtRef.current;
           haltAudio();
           replyRef.current = "";
           void sendRef.current({ userText: text, source: "voice" });
@@ -629,6 +640,7 @@ function Workspace() {
     micWantedRef.current = true;
     rec.start();
     setMicOn(true);
+    micStartedAtRef.current = Date.now();
     if (modeRef.current === "idle") setMode("listening");
   }, [stopMic, haltAudio]);
 
