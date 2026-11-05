@@ -660,6 +660,13 @@ function Workspace() {
     textareaRef.current?.focus();
   }, [convId]);
 
+  // keep the diagnostics panel live while it's open
+  useEffect(() => {
+    if (!debug) return;
+    const t = window.setInterval(() => setMetricsTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [debug]);
+
   const submitText = () => {
     const t = input.trim();
     if (!t) return;
@@ -667,6 +674,16 @@ function Workspace() {
     void send({ userText: t, source: "text" });
     textareaRef.current?.focus();
   };
+
+  // Quick action: make sure the screen is connected (so Melo can see), then ask.
+  const quickAsk = (prompt?: string) => {
+    void (async () => {
+      setError(null);
+      if (!sharing) await startSharing();
+      if (prompt) void send({ userText: prompt, source: "text" });
+    })();
+  };
+  const lastConv = (ws.data?.conversations ?? [])[0];
 
   // ---------- sidebar data ----------
   const projects = (ws.data?.projects ?? []).filter((p) => !p.archived);
@@ -866,7 +883,7 @@ function Workspace() {
 
         <div className="border-t border-border p-3">
           <Link to="/dashboard" className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">
-            <Settings className="size-4" /> Settings & plan
+            <Settings className="size-4" /> Settings
           </Link>
         </div>
       </aside>
@@ -895,7 +912,7 @@ function Workspace() {
               </span>
               <h1 className="mt-6 font-display text-4xl tracking-tight">Melo</h1>
               <p className="mt-2 text-muted-foreground">Your AI assistant that sees what you see.</p>
-              <div className="mt-8 flex flex-wrap justify-center gap-2">
+              <div className="mt-8 flex max-w-md flex-wrap justify-center gap-2">
                 <button
                   onClick={async () => {
                     if (!sharing) await startSharing();
@@ -909,8 +926,25 @@ function Workspace() {
                   <Mic className="size-4" /> Talk to Melo
                 </button>
                 <button onClick={() => textareaRef.current?.focus()} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
-                  Start a chat
+                  Ask Melo
                 </button>
+                <button onClick={() => quickAsk("Look at my screen and explain what's on it in simple terms.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Explain this page
+                </button>
+                <button onClick={() => quickAsk("Something on my screen isn't working the way I want. Look at it and tell me the single next thing to fix, one step at a time.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Help me fix something
+                </button>
+                <button onClick={() => quickAsk("Teach me how to do what's on my screen, one step at a time.")} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent">
+                  Teach me
+                </button>
+                {lastConv && (
+                  <button
+                    onClick={() => void navigate({ to: "/melo", search: { c: lastConv.id } })}
+                    className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm hover:bg-accent"
+                  >
+                    Continue previous task
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -1058,6 +1092,29 @@ function Workspace() {
           >
             Stop session
           </button>
+        </aside>
+      )}
+
+      {/* INTERNAL DIAGNOSTICS — only with /melo?debug=1, never shown to normal users */}
+      {debug && (
+        <aside
+          className="fixed bottom-28 left-4 z-40 w-60 rounded-xl border border-border bg-card/95 p-3 text-xs backdrop-blur"
+          aria-label="Diagnostics"
+        >
+          <p className="mb-2 font-medium text-muted-foreground">Diagnostics</p>
+          <ul className="space-y-1 text-muted-foreground">
+            <li>First text: {metricsRef.current.ttft} ms</li>
+            <li>Full reply: {metricsRef.current.total} ms</li>
+            <li>Frame capture: {metricsRef.current.captureMs} ms</li>
+            <li>Voice fetch: {metricsRef.current.ttsMs} ms</li>
+            <li>Speech → text: {metricsRef.current.sttFirstMs} ms</li>
+            <li>
+              Failed: {metricsRef.current.failed} · cancelled: {metricsRef.current.cancelled}
+            </li>
+            <li>
+              Frames: {stats.captured} · sent: {stats.sent}
+            </li>
+          </ul>
         </aside>
       )}
     </div>
