@@ -1,0 +1,27 @@
+:root { color-scheme: dark; --bg:#0a0a14; --card:#141428; --border:#2a2a48; --fg:#ececf6; --muted:#9a9ab8; --primary:#7c5cff; }
+* { box-sizing: border-box; }
+body { margin:0; padding:14px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+header .link { margin-left:auto; }
+.orb { width:34px; height:34px; border-radius:50%; background:conic-gradient(from 0deg,#5b8cff,#b05cff,#ff5ca8,#5b8cff); box-shadow:0 0 18px #7c5cff88; animation:spin 6s linear infinite; }
+.orb[data-mode="thinking"] { animation-duration:1.2s; }
+.orb[data-mode="speaking"] { animation-duration:2s; box-shadow:0 0 28px #ff5ca8aa; }
+.orb[data-mode="listening"] { box-shadow:0 0 28px #5bffb0aa; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.muted { color:var(--muted); font-size:12px; } .small { font-size:11px; }
+.hidden { display:none !important; }
+input, textarea { width:100%; background:var(--card); border:1px solid var(--border); color:var(--fg); border-radius:10px; padding:9px 11px; margin-bottom:8px; font:inherit; resize:none; }
+button { background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:10px; padding:7px 11px; cursor:pointer; font:inherit; font-size:13px; }
+button:hover { border-color:var(--primary); }
+button.primary { background:var(--primary); border-color:var(--primary); color:#fff; }
+button.link { background:none; border:none; color:var(--muted); font-size:12px; }
+.quick { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.toggle { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); margin-bottom:10px; }
+.toggle input { width:auto; margin:0; }
+#log { display:flex; flex-direction:column; gap:10px; margin-bottom:10px; max-height:55vh; overflow-y:auto; }
+.msg { padding:8px 11px; border-radius:12px; white-space:pre-wrap; }
+.msg.user { align-self:flex-end; background:var(--card); max-width:85%; }
+.msg.assistant { align-self:flex-start; }
+.composer { position:sticky; bottom:0; background:var(--bg); padding-top:4px; }
+.row { display:flex; gap:6px; } .row #send { margin-left:auto; }
+.err { color:#ff6b8a; font-size:12px; min-height:1em; }

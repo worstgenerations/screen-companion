@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Melo AI",
+  "version": "1.0.0",
+  "description": "Ask Melo about the page you're on. It sees the current tab (only when you ask) and talks you through it.",
+  "permissions": ["sidePanel", "storage", "activeTab"],
+  "optional_host_permissions": ["<all_urls>"],
+  "host_permissions": ["https://live-screen-coach.lovable.app/*", "https://wotcppwwvieobzqhbagu.supabase.co/*"],
+  "action": { "default_title": "Open Melo", "default_icon": "icon.png" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "background": { "service_worker": "background.js" },
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}

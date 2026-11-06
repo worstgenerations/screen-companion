@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Melo</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <div class="orb" id="orb" data-mode="idle"></div>
+    <div><strong>Melo</strong><div id="status" class="muted">Ready</div></div>
+    <button id="signout" class="link hidden">Sign out</button>
+  </header>
+
+  <section id="login">
+    <p class="muted">Sign in with your Melo account (email + password).</p>
+    <input id="email" type="email" placeholder="Email" />
+    <input id="password" type="password" placeholder="Password" />
+    <button id="signin" class="primary">Sign in</button>
+    <p id="loginErr" class="err"></p>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="quick">
+      <button data-q="Explain this page in simple terms.">Explain this page</button>
+      <button data-q="Where do I change my account settings on this site?">Find settings</button>
+      <button data-q="Help me fix what's wrong here, one step at a time.">Help me fix it</button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="seeTab" checked /> Let Melo see this tab when I ask</label>
+    <div id="log"></div>
+    <p id="err" class="err"></p>
+    <div class="composer">
+      <textarea id="input" rows="2" placeholder="Ask Melo about this page…"></textarea>
+      <div class="row">
+        <button id="mic">🎙 Talk</button>
+        <button id="stop" class="hidden">Stop voice</button>
+        <button id="send" class="primary">Send</button>
+      </div>
+    </div>
+    <p class="muted small">Melo only looks at the tab when you send a question. It never clicks or types for you.</p>
+  </section>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
