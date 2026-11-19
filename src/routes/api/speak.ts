@@ -8,6 +8,7 @@ const CORS = {
 };
 
 export const Route = createFileRoute("/api/speak")({
+  staticData: { sitemap: false },
   server: {
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),

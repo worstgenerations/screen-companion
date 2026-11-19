@@ -11,3 +11,4 @@
 
 ## Project rules
 - The Chrome extension lives in `melo-extension/` (plain MV3, no build step) and calls the published app's `/api/melo-stream` and `/api/speak`; keep CORS on those routes. Why: one backend serves both the web app and the extension.
+- Serve the sitemap through a TanStack server route using explicit router `staticData.sitemap` decisions. Why: public URLs stay current while private pages and APIs remain excluded.

@@ -5,6 +5,7 @@ import { ArrowLeft, Loader2, Users, Zap, Coins, Activity } from "lucide-react";
 import { getAdminStats } from "@/lib/melo.functions";
 
 export const Route = createFileRoute("/_authenticated/admin")({
+  staticData: { sitemap: false },
   head: () => ({
     meta: [{ title: "Admin — Melo AI" }],
   }),

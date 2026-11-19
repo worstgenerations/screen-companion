@@ -15,6 +15,7 @@ Rules for every reply:
 - Only reply with exactly SKIP when the screen is literally the same as the last one you described and you already told them the step. Never SKIP on the first screenshot.`;
 
 export const Route = createFileRoute("/api/ask")({
+  staticData: { sitemap: false },
   server: {
     handlers: {
       POST: async ({ request }) => {

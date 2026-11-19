@@ -47,6 +47,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/melo")({
+  staticData: { sitemap: false },
   validateSearch: z.object({ c: z.string().uuid().optional(), debug: z.boolean().optional() }),
   head: () => ({
     meta: [

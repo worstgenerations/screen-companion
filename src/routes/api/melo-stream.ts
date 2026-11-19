@@ -37,6 +37,7 @@ function fail(reason: string, status: number) {
 }
 
 export const Route = createFileRoute("/api/melo-stream")({
+  staticData: { sitemap: false },
   server: {
     handlers: {
       OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
