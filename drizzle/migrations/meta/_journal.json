@@ -8,6 +8,13 @@
       "when": 1791042579430,
       "tag": "0000_projects_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795459592595,
+      "tag": "0001_restrict_app_config_reads",
+      "breakpoints": true
     }
   ]
 }
