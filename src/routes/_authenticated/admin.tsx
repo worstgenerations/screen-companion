@@ -7,7 +7,14 @@ import { getAdminStats } from "@/lib/melo.functions";
 export const Route = createFileRoute("/_authenticated/admin")({
   staticData: { sitemap: false },
   head: () => ({
-    meta: [{ title: "Admin — Melo AI" }],
+    meta: [
+      { title: "Admin — Melo AI" },
+      { name: "description", content: "Melo AI account activity and usage administration." },
+      { property: "og:title", content: "Admin — Melo AI" },
+      { property: "og:description", content: "Melo AI account activity and usage administration." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
   }),
   component: AdminPage,
 });

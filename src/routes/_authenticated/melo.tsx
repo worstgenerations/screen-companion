@@ -5,9 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import {
   Mic,
-  MicOff,
   Loader2,
-  Volume2,
   MonitorUp,
   MonitorX,
   ArrowUp,
@@ -51,8 +49,12 @@ export const Route = createFileRoute("/_authenticated/melo")({
   validateSearch: z.object({ c: z.string().uuid().optional(), debug: z.boolean().optional() }),
   head: () => ({
     meta: [
-      { title: "Melo — Workspace" },
-      { name: "description", content: "Share your screen, talk naturally, and let Melo guide you step by step." },
+      { title: "Melo Live Screen Guide — Melo AI" },
+      { name: "description", content: "Share your screen, speak naturally, and get fast, spoken next-step guidance from Melo AI." },
+      { property: "og:title", content: "Melo Live Screen Guide — Melo AI" },
+      { property: "og:description", content: "Share your screen, speak naturally, and get fast, spoken next-step guidance from Melo AI." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: Workspace,
@@ -70,23 +72,23 @@ const PERSONALITIES = [
   { id: "savage", name: "Savage Melo", desc: "Sarcastic · blunt" },
 ] as const;
 const VOICE_TUNING: Record<string, { rate: number; pitch: number }> = {
-  classic: { rate: 1.05, pitch: 1 },
-  playful: { rate: 1.15, pitch: 1.25 },
-  cute: { rate: 1.1, pitch: 1.5 },
-  commander: { rate: 1, pitch: 0.7 },
-  mentor: { rate: 0.95, pitch: 0.95 },
-  savage: { rate: 1.1, pitch: 0.9 },
+  classic: { rate: 1.18, pitch: 1 },
+  playful: { rate: 1.22, pitch: 1.25 },
+  cute: { rate: 1.18, pitch: 1.5 },
+  commander: { rate: 1.08, pitch: 0.7 },
+  mentor: { rate: 1.02, pitch: 0.95 },
+  savage: { rate: 1.17, pitch: 0.9 },
 };
 
 const FILLER = /^(uh+|um+|hmm+|mm+|okay|ok|yeah|yep|yes|no|right|cool|alright|ah+|oh+|huh|so|well|thanks|thank you)[.!?, ]*$/i;
 const MEANINGFUL_CELLS = 3; // changed grid cells (of 48) that count as a real UI change
 const SPEED_MODES = [
-  { id: "fast", name: "Fast", desc: "checks constantly, short answers", tick: 250, gap: 2500, width: 1024, q: 0.6 },
-  { id: "balanced", name: "Balanced", desc: "normal checks, clear steps", tick: 500, gap: 4000, width: 1280, q: 0.62 },
-  { id: "deep", name: "Deep", desc: "calmer checks, detailed guidance", tick: 1000, gap: 7000, width: 1600, q: 0.7 },
+  { id: "fast", name: "Fast", desc: "checks constantly, short answers", tick: 150, gap: 900, width: 1024, q: 0.6 },
+  { id: "balanced", name: "Balanced", desc: "normal checks, clear steps", tick: 350, gap: 2600, width: 1280, q: 0.62 },
+  { id: "deep", name: "Deep", desc: "calmer checks, detailed guidance", tick: 750, gap: 5500, width: 1600, q: 0.7 },
 ] as const;
 type SpeedMode = (typeof SPEED_MODES)[number];
-const STUCK_AFTER_MS = 25000; // no screen change for this long -> offer help
+const STUCK_AFTER_MS = 15000; // no screen change for this long -> offer help
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SR = any;
@@ -279,7 +281,7 @@ function Workspace() {
     const t = VOICE_TUNING[personaRef.current] ?? VOICE_TUNING["classic"]!;
     if (url) {
       const a = new Audio(url);
-      a.playbackRate = Math.min(1.25, Math.max(0.85, t.rate));
+      a.playbackRate = Math.min(1.3, Math.max(0.85, t.rate));
       a.onended = () => {
         URL.revokeObjectURL(url);
         next();
@@ -498,7 +500,7 @@ function Workspace() {
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // Local screen awareness: tiny thumbnail every 300ms (never sent anywhere).
+  // Local screen awareness: tiny thumbnail every 150ms in Fast mode (never sent anywhere).
   // Region-based diff ignores cursor/clock/spinner noise; a meaningful change is
   // only analysed once the screen settles, so bursts (click → menu → submenu)
   // produce ONE request for the newest state.
@@ -509,20 +511,21 @@ function Workspace() {
     let stuckNudged = false;
     let pendingChange = false;
     const W = 64, H = 36, CW = 8, CH = 6; // 8x6 grid of cells
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return;
     const t = window.setInterval(() => {
       const v = videoRef.current;
       if (!v || !v.videoWidth) return;
-      const c = document.createElement("canvas");
-      c.width = W;
-      c.height = H;
-      const ctx = c.getContext("2d", { willReadFrequently: true })!;
       ctx.drawImage(v, 0, 0, W, H);
       const px = ctx.getImageData(0, 0, W, H).data;
       setStats((s) => ({ ...s, captured: s.captured + 1 }));
       const last = lastThumbRef.current;
       lastThumbRef.current = px;
       const now = Date.now();
-      const free = modeRef.current !== "speaking" && !busyRef.current && !interimRef.current;
+      const free = !busyRef.current && !interimRef.current;
       if (!firstDone) {
         if (!free) return;
         firstDone = true;
@@ -555,6 +558,11 @@ function Workspace() {
       if (pendingChange && !moving && now - lastAutoRef.current > modeCfgRef.current.gap) {
         pendingChange = false;
         lastAutoRef.current = now;
+        if (modeRef.current === "speaking") {
+          haltAudio();
+          replyRef.current = "";
+          setMode(micWantedRef.current ? "listening" : "idle");
+        }
         void sendRef.current({ source: "screen", auto: true });
       } else if (!stuckNudged && now - lastChangeAt > STUCK_AFTER_MS && now - lastAutoRef.current > STUCK_AFTER_MS) {
         stuckNudged = true;
@@ -563,7 +571,7 @@ function Workspace() {
       }
     }, modeCfgRef.current.tick);
     return () => window.clearInterval(t);
-  }, [sharing, speed]);
+  }, [sharing, speed, haltAudio]);
 
   // ---------- hands-free mic ----------
   const stopMic = useCallback(() => {
@@ -614,9 +622,21 @@ function Workspace() {
       interimRef.current = partial;
       if (partial) {
         setInterim(partial);
-        // barge-in: user talking over Melo
-        if (modeRef.current === "speaking" && partial.split(" ").length >= 2 && !replyRef.current.includes(partial.toLowerCase())) {
+        // Barge in as soon as speech is recognizable; cancel stale screen/chat guidance too.
+        if (
+          (modeRef.current === "speaking" || modeRef.current === "thinking") &&
+          partial.split(/\s+/).filter(Boolean).length >= 2 &&
+          !replyRef.current.includes(partial.toLowerCase())
+        ) {
           haltAudio();
+          if (busyRef.current) {
+            genRef.current++;
+            streamAbortRef.current?.abort();
+            busyRef.current = false;
+            autoInFlightRef.current = false;
+            pendingRef.current = null;
+            streamDoneRef.current = true;
+          }
           replyRef.current = "";
           setMode("listening");
         }
@@ -765,8 +785,9 @@ function Workspace() {
     </div>
   );
 
+  const latestAssistantTurnId = [...turns].reverse().find((turn) => turn.role === "assistant")?.id;
   const statusLabel =
-    mode === "listening" ? "Listening" : mode === "thinking" ? "Thinking" : mode === "speaking" ? "Melo speaking" : micOn ? "Mic on" : "Talk";
+    mode === "listening" ? "Listening" : mode === "thinking" ? "Thinking" : mode === "speaking" ? "Melo speaking" : micOn ? "Listening" : "Talk";
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
@@ -897,8 +918,8 @@ function Workspace() {
           </button>
         )}
         {sharing && !panelOpen && (
-          <button onClick={() => setPanelOpen(true)} className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs" aria-label="Show session panel">
-            <span className="size-2 rounded-full bg-primary animate-pulse" /> Screen connected <PanelRightOpen className="size-3.5" />
+            <button onClick={() => setPanelOpen(true)} className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs" aria-label="Show session panel">
+            <span className="size-2 rounded-full bg-primary animate-pulse" /> Watching changes <PanelRightOpen className="size-3.5" />
           </button>
         )}
 
@@ -953,7 +974,7 @@ function Workspace() {
               {turns.map((t) => (
                 <div key={t.id} className={t.role === "user" ? "flex justify-end" : "flex gap-3"}>
                   {t.role === "assistant" && (
-                    <span className="orb-stage mt-0.5 grid size-6 shrink-0 place-items-center" data-mode="idle">
+                    <span className="orb-stage mt-0.5 grid size-6 shrink-0 place-items-center" data-mode={t.id === latestAssistantTurnId ? mode : "idle"}>
                       <span className="orb-swirl orb-swirl-1" />
                       <span className="orb-glass" />
                     </span>
@@ -1017,7 +1038,15 @@ function Workspace() {
                   )}
                   aria-label={mode === "speaking" ? "Stop Melo speaking" : micOn ? "Mute microphone" : "Talk to Melo"}
                 >
-                  {mode === "thinking" ? <Loader2 className="size-4 animate-spin" /> : mode === "speaking" ? <Volume2 className="size-4" /> : micOn ? <Mic className="size-4" /> : <MicOff className="size-4" />}
+                  {mode === "thinking" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <span className="orb-stage grid size-5 shrink-0 place-items-center" data-mode={mode} aria-hidden="true">
+                      <span className="orb-rim" />
+                      <span className="orb-swirl orb-swirl-1" />
+                      <span className="orb-glass" />
+                    </span>
+                  )}
                   {statusLabel}
                 </button>
               </div>
@@ -1033,13 +1062,20 @@ function Workspace() {
       {sharing && panelOpen && (
         <aside className="hidden w-64 shrink-0 flex-col gap-4 border-l border-border bg-card/40 p-4 lg:flex">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium">Live session</h2>
+            <div className="flex items-center gap-2">
+              <span className="orb-stage grid size-6 shrink-0 place-items-center" data-mode={mode} aria-hidden="true">
+                <span className="orb-rim" />
+                <span className="orb-swirl orb-swirl-1" />
+                <span className="orb-glass" />
+              </span>
+              <h2 className="text-sm font-medium">Live session</h2>
+            </div>
             <button onClick={() => setPanelOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-accent" aria-label="Hide panel">
               <PanelRightClose className="size-4" />
             </button>
           </div>
           <ul className="space-y-2 text-sm">
-            <li className="flex items-center gap-2"><span className="size-2 rounded-full bg-primary animate-pulse" /> Screen connected</li>
+            <li className="flex items-center gap-2"><span className="size-2 rounded-full bg-primary animate-pulse" /> Watching for changes</li>
             <li className="flex items-center gap-2"><span className={cn("size-2 rounded-full", micOn ? "bg-primary" : "bg-muted-foreground/40")} /> {micOn ? "Mic active" : "Mic muted"}</li>
             <li className="flex items-center gap-2"><span className={cn("size-2 rounded-full", mode === "speaking" ? "bg-primary animate-pulse" : "bg-muted-foreground/40")} /> {statusLabel}</li>
           </ul>

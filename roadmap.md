@@ -9,3 +9,4 @@ Source spec: MELO AI — Transform into a fast, real-time AI assistant (uploaded
 - [x] 5. Chrome extension (MV3 side panel) in melo-extension/, CORS on /api/melo-stream + /api/speak.
 - [ ] 6. Real-device test of voice + screen share + extension (needs the user's computer).
 - [x] 7. Verify the extension package includes chat, microphone input, page capture, and spoken replies; JavaScript syntax checks pass.
+- [x] 8. Speed up live screen-change checks, make voice barge-in cancel stale guidance, and surface Siri-style listening/speaking feedback.

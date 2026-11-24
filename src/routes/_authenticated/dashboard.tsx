@@ -11,6 +11,10 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
     meta: [
       { title: "Dashboard — Melo AI" },
       { name: "description", content: "Your Melo AI account and today's activity." },
+      { property: "og:title", content: "Dashboard — Melo AI" },
+      { property: "og:description", content: "Your Melo AI account and today's activity." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: Dashboard,
